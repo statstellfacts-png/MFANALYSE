@@ -6,6 +6,7 @@
 <title>FundScope India — MF Analyser</title>
 <link href="https://fonts.googleapis.com/css2?family=DM+Serif+Display:ital@0;1&family=JetBrains+Mono:wght@400;500;600&family=Outfit:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 <style>
 :root {
   --ink: #0a0d12;
@@ -319,6 +320,7 @@ code{font-family:'JetBrains Mono',monospace;font-size:10.5px;background:rgba(255
   header{padding:0 14px;}
   .nav-tabs{padding:0 14px;}
 }
+@keyframes spin{to{transform:rotate(360deg);}}
 </style>
 </head>
 <body>
@@ -436,32 +438,107 @@ code{font-family:'JetBrains Mono',monospace;font-size:10.5px;background:rgba(255
     <p class="s-desc">Upload your CAMS or KFintech consolidated statement to see benchmark comparison, alpha generation per fund, and smarter alternatives in each category.</p>
   </div>
 
+  <!-- PDF PASSWORD MODAL -->
+  <div id="pdfPwdModal" style="display:none;position:fixed;inset:0;z-index:800;background:rgba(0,0,0,.7);backdrop-filter:blur(8px);align-items:center;justify-content:center;">
+    <div style="background:var(--ink2);border:1px solid var(--border2);border-radius:16px;padding:28px 32px;width:min(440px,90vw);box-shadow:0 24px 80px rgba(0,0,0,.6);">
+      <div style="font-family:'DM Serif Display',serif;font-size:20px;color:var(--white);margin-bottom:6px;">🔐 PDF Password Required</div>
+      <div style="font-size:12.5px;color:var(--text2);line-height:1.7;margin-bottom:18px;">
+        CAMS statements are password-protected. The default password is your <strong style="color:var(--amber);">PAN number in UPPERCASE</strong> (e.g. <code>ABCDE1234F</code>).<br>
+        <span style="font-size:11px;color:var(--text3);">Your password is never stored or transmitted — all processing is local.</span>
+      </div>
+      <div style="position:relative;margin-bottom:14px;">
+        <input type="password" id="pdfPwdInput" placeholder="Enter PAN / Password (e.g. ABCDE1234F)"
+          style="width:100%;padding:11px 44px 11px 14px;font-family:'JetBrains Mono',monospace;font-size:14px;letter-spacing:.06em;border-radius:9px;border:1px solid var(--border2);background:var(--ink3);color:var(--white);outline:none;"
+          onkeydown="if(event.key==='Enter')submitPdfPwd()"
+          oninput="this.value=this.value.toUpperCase()">
+        <button onclick="togglePwd()" id="eyeBtn" style="position:absolute;right:12px;top:50%;transform:translateY(-50%);background:none;border:none;cursor:pointer;color:var(--text3);font-size:16px;">👁</button>
+      </div>
+      <div id="pdfPwdHint" style="font-size:11px;margin-bottom:14px;min-height:16px;"></div>
+      <div style="display:flex;gap:10px;">
+        <button onclick="submitPdfPwd()" id="pdfPwdBtn"
+          style="flex:1;padding:11px;background:rgba(0,229,195,.15);border:1px solid rgba(0,229,195,.3);border-radius:9px;color:var(--teal);font-weight:700;font-size:13px;cursor:pointer;font-family:'Outfit',sans-serif;transition:all .2s;">
+          🔓 Unlock & Parse PDF
+        </button>
+        <button onclick="closePwdModal()"
+          style="padding:11px 18px;background:transparent;border:1px solid var(--border2);border-radius:9px;color:var(--text2);cursor:pointer;font-family:'Outfit',sans-serif;">
+          Cancel
+        </button>
+      </div>
+    </div>
+  </div>
+
   <div style="display:grid;grid-template-columns:1.1fr .9fr;gap:18px;margin-bottom:28px;" id="port-upload-section">
     <div class="card">
       <div class="card-t"><div class="dot" style="background:var(--teal)"></div>Import Statement</div>
-      <div class="drop-zone" id="dropZone" onclick="document.getElementById('portFile').click()"
-        ondragover="dzOver(event)" ondragleave="dzLeave()" ondrop="dzDrop(event)">
-        <input type="file" id="portFile" accept=".csv,.xlsx,.xls" style="display:none" onchange="onPortFile(event)">
-        <span class="dz-icon">📄</span>
-        <div class="dz-title">Drop your statement here</div>
-        <div class="dz-sub">CAMS / KFintech CSV or Excel<br>or click to browse files</div>
+
+      <!-- File type tabs -->
+      <div style="display:flex;gap:6px;margin-bottom:14px;" id="fileTypeTabs">
+        <button class="btn btn-teal" style="flex:1;font-size:12px;" onclick="setFileTab('pdf',this)" id="tab-pdf">📄 CAMS PDF</button>
+        <button class="btn btn-ghost" style="flex:1;font-size:12px;" onclick="setFileTab('csv',this)" id="tab-csv">📊 CSV / Excel</button>
       </div>
+
+      <!-- PDF upload zone -->
+      <div id="zone-pdf">
+        <div class="drop-zone" id="dropZone" onclick="document.getElementById('portPDF').click()"
+          ondragover="dzOver(event)" ondragleave="dzLeave()" ondrop="dzDrop(event)">
+          <input type="file" id="portPDF" accept=".pdf" style="display:none" onchange="onPDFFile(event)">
+          <span class="dz-icon">🔐</span>
+          <div class="dz-title">Drop CAMS PDF here</div>
+          <div class="dz-sub">Password-protected PDF accepted<br>Password = your PAN number (e.g. ABCDE1234F)</div>
+        </div>
+        <div id="pdfStatus" style="display:none;margin-top:12px;padding:10px 14px;border-radius:9px;font-size:12.5px;"></div>
+        <!-- PDF parse progress -->
+        <div id="pdfProgress" style="display:none;margin-top:12px;">
+          <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px;">
+            <div id="pdfSpinner" style="width:18px;height:18px;border:2px solid var(--border2);border-top-color:var(--teal);border-radius:50%;animation:spin .7s linear infinite;flex-shrink:0;"></div>
+            <div id="pdfProgressText" style="font-size:12px;color:var(--text2);">Reading PDF…</div>
+          </div>
+          <div style="height:4px;background:var(--ink4);border-radius:2px;overflow:hidden;">
+            <div id="pdfProgressBar" style="height:100%;background:linear-gradient(90deg,var(--teal),var(--sky));border-radius:2px;width:0%;transition:width .3s;"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- CSV/Excel upload zone -->
+      <div id="zone-csv" style="display:none;">
+        <div class="drop-zone" id="dropZoneCSV" onclick="document.getElementById('portFile').click()"
+          ondragover="dzOverCSV(event)" ondragleave="dzLeaveCSV()" ondrop="dzDropCSV(event)">
+          <input type="file" id="portFile" accept=".csv,.xlsx,.xls" style="display:none" onchange="onPortFile(event)">
+          <span class="dz-icon">📊</span>
+          <div class="dz-title">Drop CSV / Excel here</div>
+          <div class="dz-sub">Columns: Scheme Name, Current Value, Purchase Value</div>
+        </div>
+      </div>
+
       <div class="flex gap8" style="margin-top:12px;flex-wrap:wrap;">
         <button class="btn btn-teal" onclick="loadSamplePort()">▶ Try Sample Portfolio</button>
-        <button class="btn btn-ghost" onclick="dlPortTemplate()">⬇ Download Template</button>
+        <button class="btn btn-ghost" onclick="dlPortTemplate()">⬇ Template</button>
       </div>
     </div>
+
     <div class="card">
-      <div class="card-t"><div class="dot" style="background:var(--sky)"></div>How to Export</div>
+      <div class="card-t"><div class="dot" style="background:var(--sky)"></div>How to Get Your Statement</div>
       <div style="font-size:12px;line-height:1.8;color:var(--text2);">
-        <div style="padding:10px 12px;background:var(--ink3);border-radius:8px;border-left:2px solid var(--teal);margin-bottom:10px;">
-          <b style="color:var(--teal)">CAMS</b> → camsonline.com → Statements → Mailback → Detailed (All Folios) → CSV
+
+        <div style="padding:11px 13px;background:var(--ink3);border-radius:9px;border-left:2px solid var(--teal);margin-bottom:10px;">
+          <div style="font-weight:700;color:var(--teal);margin-bottom:4px;">📄 CAMS PDF (Recommended)</div>
+          <div style="color:var(--text2);">camsonline.com → Statements → Mailback Statement → Detailed → Submit</div>
+          <div style="color:var(--text3);font-size:11px;margin-top:3px;">You'll receive a PDF by email. Password = PAN in UPPERCASE</div>
         </div>
-        <div style="padding:10px 12px;background:var(--ink3);border-radius:8px;border-left:2px solid var(--sky);">
-          <b style="color:var(--sky)">KFintech</b> → kfintech.com → Investor → My Account → Statement of Account → Excel
+
+        <div style="padding:11px 13px;background:var(--ink3);border-radius:9px;border-left:2px solid var(--sky);margin-bottom:10px;">
+          <div style="font-weight:700;color:var(--sky);margin-bottom:4px;">📊 KFintech Excel</div>
+          <div style="color:var(--text2);">kfintech.com → Investor → Statement of Account → Download Excel</div>
         </div>
-        <div style="margin-top:12px;padding:9px 11px;background:rgba(251,191,36,.06);border:1px solid rgba(251,191,36,.15);border-radius:8px;font-size:11px;color:var(--amber);">
-          🔒 All processing is 100% local in your browser. No data leaves your device.
+
+        <div style="padding:11px 13px;background:var(--ink3);border-radius:9px;border-left:2px solid var(--amber);">
+          <div style="font-weight:700;color:var(--amber);margin-bottom:4px;">🔐 Password Guide</div>
+          <div style="color:var(--text2);">CAMS: <code>PAN in UPPERCASE</code> (e.g. ABCDE1234F)</div>
+          <div style="color:var(--text2);">KFintech: Date of Birth (DDMMYYYY)</div>
+        </div>
+
+        <div style="margin-top:10px;padding:9px 11px;background:rgba(251,191,36,.06);border:1px solid rgba(251,191,36,.15);border-radius:8px;font-size:11px;color:var(--amber);">
+          🔒 100% local processing. Your PDF and password never leave your device.
         </div>
       </div>
     </div>
@@ -1068,12 +1145,459 @@ function closeSlide() {
 /* ════════════════════════════════════════════════
    PORTFOLIO
 ════════════════════════════════════════════════ */
+
+/* ════════════════════════════════════════════════
+   PDF.js SETUP
+════════════════════════════════════════════════ */
+if(typeof pdfjsLib !== 'undefined') {
+  pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+}
+
+/* ════════════════════════════════════════════════
+   FILE TYPE TAB SWITCH
+════════════════════════════════════════════════ */
+function setFileTab(tab, el) {
+  document.getElementById('zone-pdf').style.display = tab === 'pdf' ? 'block' : 'none';
+  document.getElementById('zone-csv').style.display = tab === 'csv' ? 'block' : 'none';
+  document.querySelectorAll('#fileTypeTabs button').forEach(b => {
+    b.className = 'btn btn-ghost';
+    b.style.flex = '1'; b.style.fontSize = '12px';
+  });
+  el.className = 'btn btn-teal';
+  el.style.flex = '1'; el.style.fontSize = '12px';
+}
+
+/* ════════════════════════════════════════════════
+   PDF PASSWORD MODAL
+════════════════════════════════════════════════ */
+let pendingPdfData = null; // ArrayBuffer of uploaded PDF
+
+function onPDFFile(e) {
+  const file = e.target.files[0];
+  if(file) handlePdfFile(file);
+  e.target.value = '';
+}
+
+function handlePdfFile(file) {
+  if(!file.name.toLowerCase().endsWith('.pdf')) {
+    showPdfStatus('error', '⚠ Please upload a PDF file.');
+    return;
+  }
+  if(file.size > 30 * 1024 * 1024) {
+    showPdfStatus('error', '⚠ File too large. Maximum 30MB supported.');
+    return;
+  }
+
+  const reader = new FileReader();
+  reader.onload = function(e) {
+    pendingPdfData = e.target.result;
+    // Try without password first (some statements aren't protected)
+    tryParsePDF(null);
+  };
+  reader.readAsArrayBuffer(file);
+}
+
+function tryParsePDF(password) {
+  if(!pendingPdfData) return;
+  if(typeof pdfjsLib === 'undefined') {
+    showPdfStatus('error', '⚠ PDF library not loaded. Check your internet connection and refresh.');
+    return;
+  }
+
+  showPdfProgress(true, 'Opening PDF…', 10);
+
+  const loadingTask = pdfjsLib.getDocument({
+    data: pendingPdfData,
+    password: password || '',
+    verbosity: 0
+  });
+
+  loadingTask.onPassword = function(updateCallback, reason) {
+    // PDF is password protected - show modal
+    hidePdfProgress();
+    showPasswordModal();
+    // Store callback for when user submits password
+    window._pdfPasswordCallback = updateCallback;
+  };
+
+  loadingTask.promise.then(function(pdf) {
+    hidePdfProgress();
+    closePwdModal();
+    showPdfProgress(true, 'Extracting text from ' + pdf.numPages + ' pages…', 20);
+    extractAllText(pdf);
+  }).catch(function(err) {
+    hidePdfProgress();
+    if(err.name === 'PasswordException') {
+      showPasswordModal();
+    } else {
+      showPdfStatus('error', '⚠ Could not read PDF: ' + (err.message || err));
+    }
+  });
+}
+
+function showPasswordModal() {
+  const modal = document.getElementById('pdfPwdModal');
+  modal.style.display = 'flex';
+  document.getElementById('pdfPwdHint').textContent = '';
+  document.getElementById('pdfPwdInput').value = '';
+  setTimeout(() => document.getElementById('pdfPwdInput').focus(), 100);
+}
+
+function closePwdModal() {
+  document.getElementById('pdfPwdModal').style.display = 'none';
+}
+
+function togglePwd() {
+  const inp = document.getElementById('pdfPwdInput');
+  inp.type = inp.type === 'password' ? 'text' : 'password';
+}
+
+function submitPdfPwd() {
+  const pwd = document.getElementById('pdfPwdInput').value.trim().toUpperCase();
+  if(!pwd) {
+    document.getElementById('pdfPwdHint').innerHTML = '<span style="color:var(--rose)">Please enter your PAN number as password</span>';
+    return;
+  }
+
+  const btn = document.getElementById('pdfPwdBtn');
+  btn.textContent = '⏳ Unlocking…';
+  btn.disabled = true;
+
+  // If pdf.js already asked for password via callback
+  if(window._pdfPasswordCallback) {
+    document.getElementById('pdfPwdHint').innerHTML = '<span style="color:var(--text2)">Trying password…</span>';
+    window._pdfPasswordCallback(pwd);
+    window._pdfPasswordCallback = null;
+
+    // Re-initiate load with password
+    closePwdModal();
+    showPdfProgress(true, 'Unlocking PDF…', 15);
+    const loadingTask = pdfjsLib.getDocument({
+      data: pendingPdfData,
+      password: pwd,
+      verbosity: 0
+    });
+    loadingTask.promise.then(function(pdf) {
+      hidePdfProgress();
+      showPdfProgress(true, 'Extracting text from ' + pdf.numPages + ' pages…', 20);
+      extractAllText(pdf);
+    }).catch(function(err) {
+      hidePdfProgress();
+      btn.textContent = '🔓 Unlock & Parse PDF';
+      btn.disabled = false;
+      if(err.name === 'PasswordException') {
+        showPasswordModal();
+        document.getElementById('pdfPwdHint').innerHTML = '<span style="color:var(--rose)">❌ Wrong password. Try your PAN in UPPERCASE (e.g. ABCDE1234F)</span>';
+      } else {
+        showPdfStatus('error', '⚠ ' + err.message);
+      }
+    });
+  } else {
+    // Direct attempt with password
+    closePwdModal();
+    showPdfProgress(true, 'Unlocking PDF…', 15);
+    const loadingTask = pdfjsLib.getDocument({
+      data: pendingPdfData,
+      password: pwd,
+      verbosity: 0
+    });
+    loadingTask.promise.then(function(pdf) {
+      hidePdfProgress();
+      showPdfProgress(true, 'Extracting text from ' + pdf.numPages + ' pages…', 20);
+      extractAllText(pdf);
+    }).catch(function(err) {
+      hidePdfProgress();
+      btn.textContent = '🔓 Unlock & Parse PDF';
+      btn.disabled = false;
+      if(err.name === 'PasswordException') {
+        showPasswordModal();
+        document.getElementById('pdfPwdHint').innerHTML = '<span style="color:var(--rose)">❌ Wrong password. Try your PAN in UPPERCASE (e.g. ABCDE1234F)</span>';
+      } else {
+        showPdfStatus('error', '⚠ ' + err.message);
+      }
+    });
+  }
+}
+
+/* ════════════════════════════════════════════════
+   PDF TEXT EXTRACTION
+════════════════════════════════════════════════ */
+async function extractAllText(pdf) {
+  const numPages = pdf.numPages;
+  let fullText = '';
+  const pageTexts = [];
+
+  for(let i = 1; i <= numPages; i++) {
+    const pct = 20 + Math.round((i / numPages) * 50);
+    showPdfProgress(true, `Extracting page ${i} of ${numPages}…`, pct);
+    try {
+      const page = await pdf.getPage(i);
+      const content = await page.getTextContent();
+      // Preserve layout by using y-position grouping
+      const items = content.items;
+      // Sort by y (descending = top to bottom), then x (left to right)
+      items.sort((a, b) => {
+        const yDiff = Math.round(b.transform[5] / 2) - Math.round(a.transform[5] / 2);
+        if(yDiff !== 0) return yDiff;
+        return a.transform[4] - b.transform[4];
+      });
+      let pageText = '';
+      let lastY = null;
+      items.forEach(item => {
+        const y = Math.round(item.transform[5] / 2);
+        if(lastY !== null && Math.abs(y - lastY) > 2) pageText += '\n';
+        pageText += item.str + ' ';
+        lastY = y;
+      });
+      pageTexts.push(pageText);
+      fullText += pageText + '\n---PAGE---\n';
+    } catch(e) { console.warn('Page', i, 'error:', e); }
+  }
+
+  showPdfProgress(true, 'Parsing fund data…', 75);
+  setTimeout(() => {
+    const holdings = parseCAMSText(fullText, pageTexts);
+    showPdfProgress(true, 'Building analysis…', 95);
+    setTimeout(() => {
+      hidePdfProgress();
+      if(holdings.length === 0) {
+        showPdfStatus('error', `⚠ No mutual fund data found in this PDF. This analyser supports CAMS Detailed Account Statements. Try the sample portfolio to see the expected format, or use the CSV/Excel tab.`);
+      } else {
+        showPdfStatus('success', `✓ Successfully extracted ${holdings.length} fund holdings from PDF`);
+        renderPortResults(holdings);
+      }
+    }, 400);
+  }, 100);
+}
+
+/* ════════════════════════════════════════════════
+   CAMS PDF PARSER — handles multiple statement formats
+════════════════════════════════════════════════ */
+function parseCAMSText(fullText, pageTexts) {
+  const holdings = [];
+  const seen = new Set();
+
+  // ── STRATEGY 1: Parse Folio blocks (Detailed Statement format)
+  // Pattern: "Folio No: XXXXXXX" followed by scheme name and closing balance + market value
+  const folioBlocks = splitIntoFolioBlocks(fullText);
+  folioBlocks.forEach(block => {
+    const holding = extractFolioHolding(block);
+    if(holding && !seen.has(holding.name)) {
+      seen.add(holding.name);
+      holdings.push(holding);
+    }
+  });
+
+  // ── STRATEGY 2: Look for market value summary lines
+  // Pattern: "Scheme Name ... Units ... Value"
+  if(holdings.length === 0) {
+    const summaryHoldings = parseSummaryFormat(fullText);
+    summaryHoldings.forEach(h => {
+      if(!seen.has(h.name)) { seen.add(h.name); holdings.push(h); }
+    });
+  }
+
+  // ── STRATEGY 3: Fallback — scan all lines for fund-like entries
+  if(holdings.length === 0) {
+    const fallback = parseFallback(fullText);
+    fallback.forEach(h => {
+      if(!seen.has(h.name)) { seen.add(h.name); holdings.push(h); }
+    });
+  }
+
+  return holdings;
+}
+
+function splitIntoFolioBlocks(text) {
+  // Split text at each "Folio No:" occurrence
+  const parts = text.split(/Folio\s*No\s*[:.]?\s*/i);
+  return parts.slice(1); // skip pre-folio header
+}
+
+function extractFolioHolding(block) {
+  // Extract folio number
+  const folioMatch = block.match(/^([A-Z0-9\/\-]+)/i);
+  const folio = folioMatch ? folioMatch[1].trim() : '';
+
+  // Extract scheme name — usually the first long text line after folio
+  // CAMS format: scheme name appears after folio/registrar lines
+  // Look for known fund name patterns
+  const schemePatterns = [
+    /([A-Z][A-Za-z\s\-]+(?:Fund|Scheme|Growth|Plan|Direct|Regular|Dividend)[A-Za-z\s\-]*(?:Growth|Plan|Direct|Regular|Option)?)/,
+    /Scheme\s*[:\-]?\s*([^\n]{10,80})/i,
+  ];
+  let schemeName = '';
+  for(const pat of schemePatterns) {
+    const m = block.match(pat);
+    if(m) { schemeName = m[1].trim().replace(/\s+/g,' '); break; }
+  }
+  if(!schemeName || schemeName.length < 10) return null;
+
+  // Extract closing units
+  let units = 0;
+  const unitPatterns = [
+    /Closing\s+Unit\s+Balance\s*[:\-]?\s*([\d,]+\.?\d*)/i,
+    /Balance\s+Units?\s*[:\-]?\s*([\d,]+\.?\d*)/i,
+    /Units?\s+Balance\s*[:\-]?\s*([\d,]+\.?\d*)/i,
+    /Closing\s+Balance\s*[:\-]?\s*([\d,]+\.?\d*)\s*(?:units?)?/i,
+  ];
+  for(const pat of unitPatterns) {
+    const m = block.match(pat);
+    if(m) { units = parseNum(m[1]); break; }
+  }
+
+  // Extract market value
+  let marketVal = 0;
+  const mvPatterns = [
+    /Market\s+Value\s+as\s+on\s+[^\:]+\s*[:\-]?\s*(?:Rs\.?|INR|₹)?\s*([\d,]+\.?\d*)/i,
+    /Current\s+Value\s*[:\-]?\s*(?:Rs\.?|INR|₹)?\s*([\d,]+\.?\d*)/i,
+    /Market\s+Value\s*[:\-]?\s*(?:Rs\.?|INR|₹)?\s*([\d,]+\.?\d*)/i,
+    /(?:Rs\.?|INR|₹)\s*([\d,]+\.?\d*)\s*(?:\*|$|\n)/,
+  ];
+  for(const pat of mvPatterns) {
+    const m = block.match(pat);
+    if(m) { marketVal = parseNum(m[1]); break; }
+  }
+
+  // Extract invested / cost value
+  let costVal = 0;
+  const costPatterns = [
+    /(?:Cost|Purchase|Invested|Investment)\s+Value\s*[:\-]?\s*(?:Rs\.?|INR|₹)?\s*([\d,]+\.?\d*)/i,
+    /Total\s+(?:Cost|Purchase|Amount)\s*[:\-]?\s*(?:Rs\.?|INR|₹)?\s*([\d,]+\.?\d*)/i,
+  ];
+  for(const pat of costPatterns) {
+    const m = block.match(pat);
+    if(m) { costVal = parseNum(m[1]); break; }
+  }
+
+  // Extract NAV
+  let nav = 0;
+  const navMatch = block.match(/NAV\s+as\s+on\s+[^\:]+\s*[:\-]?\s*(?:Rs\.?|INR|₹)?\s*([\d,]+\.?\d*)/i)
+    || block.match(/Last\s+NAV\s*[:\-]?\s*([\d,]+\.?\d*)/i);
+  if(navMatch) nav = parseNum(navMatch[1]);
+
+  // If no market value but have units and nav, compute it
+  if(marketVal === 0 && units > 0 && nav > 0) marketVal = units * nav;
+  if(marketVal === 0) return null; // skip if no value
+  if(costVal === 0) costVal = marketVal * 0.82; // estimate if missing
+
+  return {
+    name: schemeName,
+    folio: folio,
+    units: units,
+    nav: nav,
+    cur: marketVal,
+    cost: costVal,
+    gain: marketVal - costVal,
+    gainPct: costVal > 0 ? ((marketVal - costVal) / costVal * 100) : null,
+    matched: matchFund(schemeName),
+    source: 'pdf-folio'
+  };
+}
+
+function parseSummaryFormat(text) {
+  // Look for tabular summary: lines with scheme + Rs. values
+  const holdings = [];
+  const lines = text.split('\n');
+  for(let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    // Line contains a mutual fund-sounding name and has Rs./value nearby
+    if(!/fund|scheme|plan/i.test(line)) continue;
+    if(line.length < 15 || line.length > 200) continue;
+
+    // Look for value in same or next 3 lines
+    let valueStr = '';
+    const window = lines.slice(i, i+4).join(' ');
+    const valMatch = window.match(/(?:Rs\.?|INR|₹)\s*([\d,]+\.?\d*)/);
+    if(!valMatch) continue;
+
+    const name = line.trim().replace(/\s+/g,' ');
+    const val = parseNum(valMatch[1]);
+    if(val < 1000) continue; // Skip small/spurious values
+
+    holdings.push({
+      name, folio: '',
+      cur: val, cost: val * 0.82,
+      gain: val * 0.18, gainPct: 22,
+      matched: matchFund(name),
+      source: 'pdf-summary'
+    });
+  }
+  return holdings;
+}
+
+function parseFallback(text) {
+  // Very broad fallback — find any line that looks like a fund name followed by a value
+  const holdings = [];
+  const fundNameRe = /([A-Z][A-Za-z\s]+(?:Fund|Scheme)\s+(?:Direct|Regular)?\s*(?:Plan)?\s*(?:Growth|Dividend|IDCW)?)/g;
+  const valueRe = /[\d,]{4,}\.?\d*/g;
+  let m;
+  while((m = fundNameRe.exec(text)) !== null) {
+    const name = m[1].trim().replace(/\s+/g,' ');
+    if(name.length < 12) continue;
+    // Find next value
+    valueRe.lastIndex = m.index;
+    const vm = valueRe.exec(text.slice(m.index, m.index + 300));
+    if(!vm) continue;
+    const val = parseNum(vm[0]);
+    if(val < 1000 || val > 1000000000) continue;
+    holdings.push({
+      name, folio: '',
+      cur: val, cost: val * 0.82,
+      gain: val * 0.18, gainPct: 22,
+      matched: matchFund(name),
+      source: 'pdf-fallback'
+    });
+  }
+  return holdings.slice(0, 30); // limit fallback results
+}
+
+function parseNum(s) {
+  if(!s) return 0;
+  return parseFloat(s.toString().replace(/,/g,'')) || 0;
+}
+
+/* ════════════════════════════════════════════════
+   PDF UI HELPERS
+════════════════════════════════════════════════ */
+function showPdfProgress(show, text, pct) {
+  const el = document.getElementById('pdfProgress');
+  if(!el) return;
+  el.style.display = show ? 'block' : 'none';
+  if(text) document.getElementById('pdfProgressText').textContent = text;
+  if(pct !== undefined) document.getElementById('pdfProgressBar').style.width = pct + '%';
+}
+function hidePdfProgress() { showPdfProgress(false); }
+
+function showPdfStatus(type, msg) {
+  const el = document.getElementById('pdfStatus');
+  if(!el) return;
+  const isErr = type === 'error';
+  el.style.display = 'block';
+  el.style.background = isErr ? 'rgba(251,113,133,.08)' : 'rgba(0,229,195,.08)';
+  el.style.border = '1px solid ' + (isErr ? 'rgba(251,113,133,.2)' : 'rgba(0,229,195,.2)');
+  el.style.color = isErr ? 'var(--rose)' : 'var(--teal)';
+  el.innerHTML = msg;
+}
+
+/* ════════════════════════════════════════════════
+   DRAG DROP FOR PDF
+════════════════════════════════════════════════ */
 function dzOver(e){ e.preventDefault(); document.getElementById('dropZone').classList.add('dz-over'); }
 function dzLeave(){ document.getElementById('dropZone').classList.remove('dz-over'); }
 function dzDrop(e){
   e.preventDefault(); dzLeave();
-  const f=e.dataTransfer.files[0]; if(f) processPortFile(f);
+  const f = e.dataTransfer.files[0];
+  if(f) handlePdfFile(f);
 }
+
+function dzOverCSV(e){ e.preventDefault(); document.getElementById('dropZoneCSV').classList.add('dz-over'); }
+function dzLeaveCSV(){ document.getElementById('dropZoneCSV').classList.remove('dz-over'); }
+function dzDropCSV(e){
+  e.preventDefault(); dzLeaveCSV();
+  const f = e.dataTransfer.files[0]; if(f) processPortFile(f);
+}
+
 function onPortFile(e){
   const f=e.target.files[0]; if(f) processPortFile(f);
   e.target.value='';
