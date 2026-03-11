@@ -1,0 +1,1464 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>FundScope India — MF Analyser</title>
+<link href="https://fonts.googleapis.com/css2?family=DM+Serif+Display:ital@0;1&family=JetBrains+Mono:wght@400;500;600&family=Outfit:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<style>
+:root {
+  --ink: #0a0d12;
+  --ink2: #0f1520;
+  --ink3: #141d2b;
+  --ink4: #1a2535;
+  --border: #1e2d3d;
+  --border2: #253548;
+  --teal: #00e5c3;
+  --teal2: #00b89a;
+  --sky: #38bdf8;
+  --amber: #fbbf24;
+  --rose: #fb7185;
+  --violet: #a78bfa;
+  --lime: #a3e635;
+  --text: #dde8f0;
+  --text2: #8ba5bc;
+  --text3: #4d6a82;
+  --white: #f0f8ff;
+  --glow: rgba(0,229,195,.15);
+}
+*{margin:0;padding:0;box-sizing:border-box;}
+html{scroll-behavior:smooth;}
+body{
+  background:var(--ink);color:var(--text);
+  font-family:'Outfit',sans-serif;font-size:14px;
+  min-height:100vh;overflow-x:hidden;
+}
+
+/* SCANLINE BG */
+body::before{
+  content:'';position:fixed;inset:0;
+  background:
+    repeating-linear-gradient(0deg,transparent,transparent 2px,rgba(0,229,195,.012) 2px,rgba(0,229,195,.012) 4px),
+    radial-gradient(ellipse 80% 60% at 20% 0%,rgba(0,229,195,.06) 0%,transparent 60%),
+    radial-gradient(ellipse 60% 40% at 80% 100%,rgba(56,189,248,.05) 0%,transparent 60%);
+  pointer-events:none;z-index:0;
+}
+
+/* ── HEADER ── */
+header{
+  position:sticky;top:0;z-index:300;
+  background:rgba(10,13,18,.92);
+  border-bottom:1px solid var(--border);
+  backdrop-filter:blur(24px) saturate(1.4);
+  height:58px;padding:0 28px;
+  display:flex;align-items:center;justify-content:space-between;
+  gap:16px;
+}
+.logo{display:flex;align-items:center;gap:10px;text-decoration:none;}
+.logo-mark{
+  width:32px;height:32px;border-radius:7px;flex-shrink:0;
+  background:conic-gradient(var(--teal) 0deg,var(--sky) 120deg,var(--violet) 240deg,var(--teal) 360deg);
+  display:flex;align-items:center;justify-content:center;
+  font-family:'JetBrains Mono',monospace;font-size:12px;font-weight:600;color:#000;
+}
+.logo-text{font-family:'DM Serif Display',serif;font-size:20px;color:var(--white);letter-spacing:-.02em;}
+.logo-sub{font-family:'JetBrains Mono',monospace;font-size:9px;letter-spacing:.2em;color:var(--teal);text-transform:uppercase;margin-top:-2px;}
+.header-right{display:flex;align-items:center;gap:14px;}
+.live-pill{
+  display:flex;align-items:center;gap:6px;
+  padding:5px 12px;border-radius:20px;
+  background:rgba(0,229,195,.08);border:1px solid rgba(0,229,195,.2);
+  font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--teal);letter-spacing:.04em;
+}
+.live-dot{width:5px;height:5px;border-radius:50%;background:var(--teal);animation:blink 2s infinite;}
+@keyframes blink{0%,100%{opacity:1;box-shadow:0 0 4px var(--teal);}50%{opacity:.3;box-shadow:none;}}
+.disclaimer-btn{
+  font-size:10px;color:var(--text3);cursor:pointer;border:1px solid var(--border);
+  padding:4px 10px;border-radius:6px;font-family:'JetBrains Mono',monospace;
+  background:transparent;letter-spacing:.04em;transition:all .2s;
+}
+.disclaimer-btn:hover{color:var(--amber);border-color:var(--amber);}
+
+/* ── NAV TABS ── */
+.nav-tabs{
+  display:flex;align-items:center;gap:2px;
+  background:rgba(10,13,18,.9);border-bottom:1px solid var(--border);
+  backdrop-filter:blur(20px);
+  padding:0 28px;position:sticky;top:58px;z-index:290;overflow-x:auto;
+}
+.nav-tabs::-webkit-scrollbar{height:0;}
+.nav-tab{
+  padding:14px 18px;font-size:12.5px;font-weight:600;letter-spacing:.02em;
+  color:var(--text3);background:none;border:none;cursor:pointer;
+  border-bottom:2px solid transparent;white-space:nowrap;transition:all .2s;
+  font-family:'Outfit',sans-serif;
+}
+.nav-tab:hover{color:var(--text2);}
+.nav-tab.on{color:var(--teal);border-bottom-color:var(--teal);}
+.tab-pane{display:none;position:relative;z-index:1;}
+.tab-pane.on{display:block;}
+
+/* ── LAYOUT ── */
+.wrap{max-width:1480px;margin:0 auto;padding:28px 28px 100px;}
+
+/* ── SECTION HEADER ── */
+.s-head{margin-bottom:24px;}
+.s-eyebrow{
+  font-family:'JetBrains Mono',monospace;font-size:9.5px;letter-spacing:.22em;
+  text-transform:uppercase;color:var(--teal);margin-bottom:7px;display:flex;align-items:center;gap:8px;
+}
+.s-eyebrow::after{content:'';flex:1;height:1px;background:linear-gradient(90deg,rgba(0,229,195,.3),transparent);max-width:200px;}
+.s-title{font-family:'DM Serif Display',serif;font-size:28px;color:var(--white);letter-spacing:-.02em;line-height:1.2;}
+.s-desc{font-size:13px;color:var(--text2);margin-top:8px;line-height:1.65;max-width:680px;}
+
+/* ── STAT TILES ── */
+.stat-row{display:grid;grid-template-columns:repeat(5,1fr);gap:12px;margin-bottom:28px;}
+.stat-tile{
+  background:var(--ink2);border:1px solid var(--border);border-radius:12px;
+  padding:16px 18px;position:relative;overflow:hidden;transition:border-color .2s;
+}
+.stat-tile:hover{border-color:var(--border2);}
+.stat-tile::after{
+  content:'';position:absolute;top:-1px;left:0;right:0;height:2px;
+  background:linear-gradient(90deg,transparent,var(--tile-color,var(--teal)),transparent);
+}
+.stat-tile-label{font-family:'JetBrains Mono',monospace;font-size:9px;letter-spacing:.14em;text-transform:uppercase;color:var(--text3);}
+.stat-tile-val{font-family:'DM Serif Display',serif;font-size:26px;color:var(--tile-color,var(--teal));margin:5px 0 2px;letter-spacing:-.02em;}
+.stat-tile-sub{font-size:11px;color:var(--text3);}
+
+/* ── FILTERS ── */
+.filter-bar{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:16px;}
+.chip{
+  padding:6px 15px;border-radius:20px;font-size:12px;font-weight:500;cursor:pointer;
+  border:1px solid var(--border2);color:var(--text3);background:transparent;
+  transition:all .18s;font-family:'Outfit',sans-serif;white-space:nowrap;
+}
+.chip:hover{border-color:var(--teal);color:var(--teal);}
+.chip.on{background:rgba(0,229,195,.1);border-color:var(--teal);color:var(--teal);}
+.chip.on-sky{background:rgba(56,189,248,.1);border-color:var(--sky);color:var(--sky);}
+input[type=text],select{
+  background:var(--ink2);border:1px solid var(--border2);border-radius:8px;
+  color:var(--text);font-family:'Outfit',sans-serif;font-size:12.5px;
+  padding:7px 12px;outline:none;transition:border-color .2s;
+}
+input[type=text]:focus,select:focus{border-color:var(--teal);}
+input[type=text]::placeholder{color:var(--text3);}
+select option{background:var(--ink3);}
+input[type=text]{min-width:220px;}
+
+/* ── TABLE ── */
+.tbl-wrap{border-radius:12px;border:1px solid var(--border);overflow:hidden;overflow-x:auto;}
+.tbl{width:100%;border-collapse:collapse;font-size:12px;}
+.tbl thead tr{background:var(--ink3);border-bottom:1px solid var(--border2);}
+.tbl th{
+  padding:11px 13px;text-align:left;white-space:nowrap;cursor:pointer;
+  font-family:'JetBrains Mono',monospace;font-size:9.5px;letter-spacing:.08em;
+  text-transform:uppercase;color:var(--text3);user-select:none;transition:color .15s;
+}
+.tbl th:hover{color:var(--teal);}
+.tbl th.sorted{color:var(--teal);}
+.tbl td{padding:12px 13px;border-bottom:1px solid rgba(30,45,61,.5);vertical-align:middle;}
+.tbl tr:last-child td{border-bottom:none;}
+.tbl tr:hover td{background:rgba(0,229,195,.02);}
+.fn{font-weight:600;color:var(--white);font-size:12.5px;line-height:1.3;}
+.fa{font-size:11px;color:var(--text3);margin-top:2px;}
+.fm{font-size:10.5px;color:var(--text3);margin-top:1px;}
+
+/* ── MONO VALS ── */
+.mv{font-family:'JetBrains Mono',monospace;font-size:12px;}
+.g{color:#34d399;}.y{color:var(--amber);}.r{color:var(--rose);}.b{color:var(--sky);}
+.tl{color:var(--teal);}
+
+/* ── BADGES ── */
+.bdg{display:inline-flex;align-items:center;padding:2px 8px;border-radius:10px;font-size:10px;font-weight:600;letter-spacing:.03em;white-space:nowrap;}
+.bdg-g{background:rgba(52,211,153,.1);color:#34d399;border:1px solid rgba(52,211,153,.2);}
+.bdg-r{background:rgba(251,113,133,.1);color:var(--rose);border:1px solid rgba(251,113,133,.2);}
+.bdg-b{background:rgba(56,189,248,.1);color:var(--sky);border:1px solid rgba(56,189,248,.2);}
+.bdg-y{background:rgba(251,191,36,.1);color:var(--amber);border:1px solid rgba(251,191,36,.2);}
+.bdg-v{background:rgba(167,139,250,.1);color:var(--violet);border:1px solid rgba(167,139,250,.2);}
+.bdg-t{background:rgba(0,229,195,.1);color:var(--teal);border:1px solid rgba(0,229,195,.2);}
+
+/* Category badge colors */
+.c-lc{background:rgba(56,189,248,.1);color:#60cdff;border:1px solid rgba(56,189,248,.2);}
+.c-fc{background:rgba(0,229,195,.1);color:var(--teal);border:1px solid rgba(0,229,195,.2);}
+.c-mc{background:rgba(251,191,36,.1);color:var(--amber);border:1px solid rgba(251,191,36,.2);}
+.c-sc{background:rgba(251,113,133,.1);color:var(--rose);border:1px solid rgba(251,113,133,.2);}
+.c-el{background:rgba(167,139,250,.1);color:var(--violet);border:1px solid rgba(167,139,250,.2);}
+.c-hy{background:rgba(163,230,53,.1);color:var(--lime);border:1px solid rgba(163,230,53,.2);}
+.c-db{background:rgba(139,165,188,.15);color:#a0bfd0;border:1px solid rgba(139,165,188,.2);}
+.c-ix{background:rgba(0,229,195,.07);color:#66e8d7;border:1px solid rgba(0,229,195,.15);}
+.c-se{background:rgba(251,191,36,.07);color:#ffd166;border:1px solid rgba(251,191,36,.15);}
+
+/* ── RANK PILL ── */
+.rk{width:26px;height:26px;border-radius:7px;display:flex;align-items:center;justify-content:center;font-family:'JetBrains Mono',monospace;font-size:11px;font-weight:600;flex-shrink:0;}
+.rk1{background:linear-gradient(135deg,#fbbf24,#f59e0b);color:#000;}
+.rk2{background:linear-gradient(135deg,#cbd5e1,#94a3b8);color:#000;}
+.rk3{background:linear-gradient(135deg,#c87941,#a16035);color:#fff;}
+.rk-n{background:var(--ink4);color:var(--text3);border:1px solid var(--border);}
+
+/* ── STARS ── */
+.stars{font-size:11px;color:var(--amber);letter-spacing:-.02em;}
+
+/* ── SLIDE PANEL ── */
+.slide{
+  position:fixed;top:0;right:-100%;width:min(700px,100vw);height:100vh;
+  background:var(--ink2);border-left:1px solid var(--border2);
+  z-index:600;transition:right .32s cubic-bezier(.4,0,.2,1);
+  overflow-y:auto;box-shadow:-24px 0 80px rgba(0,0,0,.6);
+}
+.slide.open{right:0;}
+.slide-head{
+  padding:22px 26px 18px;background:var(--ink3);
+  border-bottom:1px solid var(--border);position:sticky;top:0;z-index:10;
+}
+.slide-close{
+  position:absolute;top:18px;right:18px;width:30px;height:30px;
+  background:var(--ink4);border:1px solid var(--border2);color:var(--text2);
+  border-radius:8px;cursor:pointer;font-size:14px;display:flex;align-items:center;justify-content:center;
+  transition:all .15s;
+}
+.slide-close:hover{color:var(--white);border-color:var(--text3);}
+.slide-body{padding:22px 26px;}
+
+/* ── RATIO GRID ── */
+.rg{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:18px;}
+.rc{background:var(--ink3);border:1px solid var(--border);border-radius:9px;padding:11px 13px;}
+.rc-label{font-family:'JetBrains Mono',monospace;font-size:9px;letter-spacing:.1em;text-transform:uppercase;color:var(--text3);}
+.rc-val{font-family:'DM Serif Display',serif;font-size:22px;margin:3px 0 1px;letter-spacing:-.02em;}
+.rc-note{font-size:10px;color:var(--text3);}
+
+/* ── RETURN TABLE ── */
+.rt{width:100%;border-collapse:collapse;font-size:12px;margin-bottom:18px;}
+.rt th,.rt td{padding:9px 11px;border-bottom:1px solid var(--border);}
+.rt th{font-family:'JetBrains Mono',monospace;font-size:9px;letter-spacing:.08em;text-transform:uppercase;color:var(--text3);text-align:center;background:var(--ink3);}
+.rt td{text-align:center;}
+.rt td:first-child{text-align:left;color:var(--text3);font-family:'JetBrains Mono',monospace;font-size:10px;}
+.rt .hl td{background:rgba(0,229,195,.04);}
+
+/* ── UPLOAD ── */
+.drop-zone{
+  border:2px dashed var(--border2);border-radius:14px;padding:44px 28px;
+  text-align:center;cursor:pointer;transition:all .22s;
+}
+.drop-zone:hover,.drop-zone.dz-over{border-color:var(--teal);background:rgba(0,229,195,.04);}
+.dz-icon{font-size:40px;margin-bottom:12px;display:block;}
+.dz-title{font-family:'DM Serif Display',serif;font-size:18px;color:var(--white);margin-bottom:6px;}
+.dz-sub{font-size:12px;color:var(--text2);line-height:1.7;}
+
+/* ── ANALYSIS ── */
+.a-kpi-row{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:24px;}
+.fund-row{
+  display:flex;align-items:flex-start;gap:12px;
+  padding:14px 0;border-bottom:1px solid rgba(30,45,61,.5);
+}
+.fund-row:last-child{border-bottom:none;}
+.beat-tag{display:flex;align-items:center;gap:5px;padding:3px 10px;border-radius:6px;font-size:10.5px;font-weight:700;white-space:nowrap;flex-shrink:0;}
+.beat-yes{background:rgba(52,211,153,.1);color:#34d399;}
+.beat-no{background:rgba(251,113,133,.1);color:var(--rose);}
+.alt-box{background:rgba(56,189,248,.05);border:1px solid rgba(56,189,248,.15);border-radius:9px;padding:12px 14px;margin-top:8px;}
+
+/* ── COMPARE ── */
+.cmp-best{color:#34d399;font-weight:700;}
+.cmp-worst{color:var(--rose);}
+.cmp-neutral{color:var(--text);}
+
+/* ── RANK GRID ── */
+.rank-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:20px;}
+.rank-card{background:var(--ink2);border:1px solid var(--border);border-radius:14px;overflow:hidden;}
+.rank-card-head{
+  padding:13px 16px;background:var(--ink3);border-bottom:1px solid var(--border);
+  display:flex;align-items:center;justify-content:space-between;
+}
+.rank-card-title{font-family:'DM Serif Display',serif;font-size:16px;color:var(--white);}
+.rank-row{display:flex;align-items:center;gap:12px;padding:11px 15px;border-bottom:1px solid rgba(30,45,61,.3);cursor:pointer;transition:background .12s;}
+.rank-row:last-child{border-bottom:none;}
+.rank-row:hover{background:rgba(0,229,195,.03);}
+.rr-name{font-size:12px;font-weight:600;color:var(--white);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:220px;}
+.rr-mgr{font-size:10px;color:var(--text3);margin-top:1px;}
+.rr-val{text-align:right;flex-shrink:0;}
+.rr-num{font-family:'JetBrains Mono',monospace;font-size:13px;font-weight:600;}
+.rr-lbl{font-size:9px;color:var(--text3);text-transform:uppercase;letter-spacing:.06em;}
+
+/* ── SCORE BAR ── */
+.score-bar-bg{height:3px;background:var(--ink4);border-radius:2px;margin-top:4px;}
+.score-bar-fill{height:3px;border-radius:2px;background:linear-gradient(90deg,var(--teal),var(--sky));}
+
+/* ── MISC ── */
+.card{background:var(--ink2);border:1px solid var(--border);border-radius:13px;padding:18px 20px;}
+.card-t{font-family:'JetBrains Mono',monospace;font-size:9.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--text3);margin-bottom:14px;display:flex;align-items:center;gap:8px;}
+.card-t .dot{width:6px;height:6px;border-radius:50%;flex-shrink:0;}
+.divider{border:none;border-top:1px solid var(--border);margin:16px 0;}
+.btn{padding:9px 20px;border-radius:8px;font-family:'Outfit',sans-serif;font-size:13px;font-weight:600;cursor:pointer;border:none;transition:all .18s;}
+.btn-teal{background:rgba(0,229,195,.12);color:var(--teal);border:1px solid rgba(0,229,195,.25);}
+.btn-teal:hover{background:rgba(0,229,195,.2);}
+.btn-ghost{background:transparent;color:var(--text2);border:1px solid var(--border2);}
+.btn-ghost:hover{border-color:var(--text3);color:var(--text);}
+.mb8{margin-bottom:8px;}.mb12{margin-bottom:12px;}.mb16{margin-bottom:16px;}.mb24{margin-bottom:24px;}
+.flex{display:flex;}.gap8{gap:8px;}.gap12{gap:12px;}.gap16{gap:16px;}
+.items-center{align-items:center;}.justify-between{justify-content:space-between;}
+.mono{font-family:'JetBrains Mono',monospace;}
+.backdrop{position:fixed;inset:0;background:rgba(0,0,0,.55);backdrop-filter:blur(4px);z-index:599;display:none;}
+.backdrop.show{display:block;}
+code{font-family:'JetBrains Mono',monospace;font-size:10.5px;background:rgba(255,255,255,.06);padding:1px 6px;border-radius:4px;color:var(--teal);}
+@keyframes fadein{from{opacity:0;transform:translateY(8px);}to{opacity:1;transform:none;}}
+.fadein{animation:fadein .3s ease;}
+::-webkit-scrollbar{width:5px;height:5px;}
+::-webkit-scrollbar-track{background:var(--ink);}
+::-webkit-scrollbar-thumb{background:var(--border2);border-radius:3px;}
+
+/* Responsive */
+@media(max-width:900px){
+  .stat-row{grid-template-columns:repeat(3,1fr);}
+  .a-kpi-row{grid-template-columns:repeat(2,1fr);}
+  .rank-grid{grid-template-columns:1fr;}
+}
+@media(max-width:600px){
+  .stat-row{grid-template-columns:1fr 1fr;}
+  .wrap{padding:16px 14px 80px;}
+  header{padding:0 14px;}
+  .nav-tabs{padding:0 14px;}
+}
+</style>
+</head>
+<body>
+
+<!-- HEADER -->
+<header>
+  <a class="logo" href="#">
+    <div class="logo-mark">FS</div>
+    <div>
+      <div class="logo-text">FundScope</div>
+      <div class="logo-sub">India MF Analyser</div>
+    </div>
+  </a>
+  <div class="header-right">
+    <div class="live-pill"><div class="live-dot"></div>NAV: Dec 2024</div>
+    <button class="disclaimer-btn" onclick="alert('Data shown is illustrative and for educational purposes only. Past performance does not guarantee future returns. Consult a SEBI-registered financial advisor before investing.')">⚠ Disclaimer</button>
+  </div>
+</header>
+
+<!-- NAV TABS -->
+<div class="nav-tabs">
+  <button class="nav-tab on" onclick="gTab('explorer')">📊 Fund Explorer</button>
+  <button class="nav-tab" onclick="gTab('portfolio')">📁 Portfolio Analyser</button>
+  <button class="nav-tab" onclick="gTab('compare')">⚖️ Compare</button>
+  <button class="nav-tab" onclick="gTab('rankings')">🏆 Rankings</button>
+  <button class="nav-tab" onclick="gTab('glossary')">📖 Ratio Guide</button>
+</div>
+
+<!-- BACKDROP -->
+<div class="backdrop" id="bd" onclick="closeSlide()"></div>
+
+<!-- SLIDE PANEL -->
+<div class="slide" id="slide">
+  <div class="slide-head">
+    <button class="slide-close" onclick="closeSlide()">✕</button>
+    <div id="sl-name" style="font-family:'DM Serif Display',serif;font-size:20px;color:var(--white);padding-right:36px;line-height:1.3;"></div>
+    <div id="sl-meta" style="margin-top:8px;display:flex;gap:7px;flex-wrap:wrap;"></div>
+  </div>
+  <div class="slide-body" id="sl-body"></div>
+</div>
+
+<!-- ═══ TAB: EXPLORER ═══ -->
+<div class="tab-pane on" id="tp-explorer">
+<div class="wrap">
+  <div class="s-head">
+    <div class="s-eyebrow">Fund Explorer</div>
+    <h1 class="s-title">Indian Mutual Fund Universe</h1>
+    <p class="s-desc">Browse and analyse all major Indian equity, hybrid and debt mutual funds. Click any row for a full deep-dive including all risk ratios, rolling returns and benchmark comparison.</p>
+  </div>
+
+  <div class="stat-row" id="exKPI"></div>
+
+  <div class="filter-bar" id="catChips"></div>
+  <div class="filter-bar" style="margin-top:-6px;">
+    <input type="text" id="fsearch" placeholder="🔍  Search fund name or AMC…" oninput="drawTable()">
+    <select id="fsort" onchange="drawTable()">
+      <option value="sharpe">Sort: Sharpe Ratio</option>
+      <option value="ret5y">Sort: 5Y Returns</option>
+      <option value="ret3y">Sort: 3Y Returns</option>
+      <option value="ret1y">Sort: 1Y Returns</option>
+      <option value="alpha">Sort: Alpha</option>
+      <option value="sortino">Sort: Sortino</option>
+      <option value="infoRatio">Sort: Info Ratio</option>
+      <option value="aum">Sort: AUM</option>
+      <option value="expense" data-dir="asc">Sort: Expense (Low→High)</option>
+    </select>
+    <select id="frating" onchange="drawTable()">
+      <option value="0">All Ratings</option>
+      <option value="5">5★ Only</option>
+      <option value="4">4★ & Above</option>
+    </select>
+    <select id="fbench" onchange="drawTable()">
+      <option value="">All Benchmarks</option>
+      <option value="beat">Beats Benchmark</option>
+      <option value="lag">Lags Benchmark</option>
+    </select>
+  </div>
+
+  <div style="font-size:11px;color:var(--text3);font-family:'JetBrains Mono',monospace;margin-bottom:10px;" id="tableCount"></div>
+
+  <div class="tbl-wrap">
+    <table class="tbl">
+      <thead><tr>
+        <th style="width:30px">#</th>
+        <th onclick="setSort('name')">Fund ⇅</th>
+        <th onclick="setSort('category')">Category ⇅</th>
+        <th onclick="setSort('ret1y')">1Y% ⇅</th>
+        <th onclick="setSort('ret3y')">3Y% ⇅</th>
+        <th onclick="setSort('ret5y')">5Y% ⇅</th>
+        <th onclick="setSort('ret10y')">10Y% ⇅</th>
+        <th onclick="setSort('sharpe')" title="Risk-adjusted return (higher=better)">Sharpe ⇅</th>
+        <th onclick="setSort('sortino')" title="Downside risk-adjusted">Sortino ⇅</th>
+        <th onclick="setSort('alpha')" title="Excess return over benchmark">Alpha ⇅</th>
+        <th onclick="setSort('beta')" title="Market sensitivity (1=market)">Beta ⇅</th>
+        <th onclick="setSort('stddev')" title="Annual volatility">StdDev ⇅</th>
+        <th onclick="setSort('infoRatio')" title="Consistency of outperformance">InfoRatio ⇅</th>
+        <th onclick="setSort('maxDrawdown')" title="Worst peak-to-trough loss">MaxDD ⇅</th>
+        <th onclick="setSort('expense')">Exp% ⇅</th>
+        <th onclick="setSort('aum')">AUM ⇅</th>
+        <th>Rating</th>
+        <th>Benchmark</th>
+      </tr></thead>
+      <tbody id="tbl-body"></tbody>
+    </table>
+  </div>
+</div>
+</div>
+
+<!-- ═══ TAB: PORTFOLIO ═══ -->
+<div class="tab-pane" id="tp-portfolio">
+<div class="wrap">
+  <div class="s-head">
+    <div class="s-eyebrow">Portfolio Analyser</div>
+    <h1 class="s-title">Analyse Your MF Holdings</h1>
+    <p class="s-desc">Upload your CAMS or KFintech consolidated statement to see benchmark comparison, alpha generation per fund, and smarter alternatives in each category.</p>
+  </div>
+
+  <div style="display:grid;grid-template-columns:1.1fr .9fr;gap:18px;margin-bottom:28px;" id="port-upload-section">
+    <div class="card">
+      <div class="card-t"><div class="dot" style="background:var(--teal)"></div>Import Statement</div>
+      <div class="drop-zone" id="dropZone" onclick="document.getElementById('portFile').click()"
+        ondragover="dzOver(event)" ondragleave="dzLeave()" ondrop="dzDrop(event)">
+        <input type="file" id="portFile" accept=".csv,.xlsx,.xls" style="display:none" onchange="onPortFile(event)">
+        <span class="dz-icon">📄</span>
+        <div class="dz-title">Drop your statement here</div>
+        <div class="dz-sub">CAMS / KFintech CSV or Excel<br>or click to browse files</div>
+      </div>
+      <div class="flex gap8" style="margin-top:12px;flex-wrap:wrap;">
+        <button class="btn btn-teal" onclick="loadSamplePort()">▶ Try Sample Portfolio</button>
+        <button class="btn btn-ghost" onclick="dlPortTemplate()">⬇ Download Template</button>
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-t"><div class="dot" style="background:var(--sky)"></div>How to Export</div>
+      <div style="font-size:12px;line-height:1.8;color:var(--text2);">
+        <div style="padding:10px 12px;background:var(--ink3);border-radius:8px;border-left:2px solid var(--teal);margin-bottom:10px;">
+          <b style="color:var(--teal)">CAMS</b> → camsonline.com → Statements → Mailback → Detailed (All Folios) → CSV
+        </div>
+        <div style="padding:10px 12px;background:var(--ink3);border-radius:8px;border-left:2px solid var(--sky);">
+          <b style="color:var(--sky)">KFintech</b> → kfintech.com → Investor → My Account → Statement of Account → Excel
+        </div>
+        <div style="margin-top:12px;padding:9px 11px;background:rgba(251,191,36,.06);border:1px solid rgba(251,191,36,.15);border-radius:8px;font-size:11px;color:var(--amber);">
+          🔒 All processing is 100% local in your browser. No data leaves your device.
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div id="port-results" style="display:none;"></div>
+</div>
+</div>
+
+<!-- ═══ TAB: COMPARE ═══ -->
+<div class="tab-pane" id="tp-compare">
+<div class="wrap">
+  <div class="s-head">
+    <div class="s-eyebrow">Fund Comparison</div>
+    <h1 class="s-title">Side-by-Side Analysis</h1>
+    <p class="s-desc">Compare up to 3 funds across every ratio, return period, cost, and manager metric. Best and worst values highlighted automatically.</p>
+  </div>
+  <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:24px;" id="cmp-pickers"></div>
+  <div id="cmp-table"></div>
+</div>
+</div>
+
+<!-- ═══ TAB: RANKINGS ═══ -->
+<div class="tab-pane" id="tp-rankings">
+<div class="wrap">
+  <div class="s-head">
+    <div class="s-eyebrow">Top Rankings</div>
+    <h1 class="s-title">Best Funds by Category</h1>
+    <p class="s-desc">Top 5 funds per category ranked by composite score (Sharpe × 30% + 5Y Return × 25% + Alpha × 20% + Sortino × 15% + InfoRatio × 10%).</p>
+  </div>
+  <div class="filter-bar" style="margin-bottom:20px;">
+    <span style="font-size:11px;color:var(--text3);font-family:'JetBrains Mono',monospace;">Rank by:</span>
+    <div class="chip on" onclick="setRankBy('composite',this)">Composite Score</div>
+    <div class="chip" onclick="setRankBy('sharpe',this)">Sharpe</div>
+    <div class="chip" onclick="setRankBy('ret5y',this)">5Y Return</div>
+    <div class="chip" onclick="setRankBy('alpha',this)">Alpha</div>
+    <div class="chip" onclick="setRankBy('sortino',this)">Sortino</div>
+    <div class="chip" onclick="setRankBy('infoRatio',this)">Info Ratio</div>
+  </div>
+  <div class="rank-grid" id="rankGrid"></div>
+</div>
+</div>
+
+<!-- ═══ TAB: GLOSSARY ═══ -->
+<div class="tab-pane" id="tp-glossary">
+<div class="wrap">
+  <div class="s-head">
+    <div class="s-eyebrow">Ratio Guide</div>
+    <h1 class="s-title">Understanding MF Ratios</h1>
+    <p class="s-desc">A plain-English guide to every metric shown in FundScope, with interpretation benchmarks for Indian equity funds.</p>
+  </div>
+  <div style="display:grid;grid-template-columns:repeat(2,1fr);gap:16px;" id="glossaryGrid"></div>
+</div>
+</div>
+
+<script>
+/* ════════════════════════════════════════════════
+   DATA — 30+ funds, Dec 2024 estimates
+════════════════════════════════════════════════ */
+const DB = [
+  /* LARGE CAP */
+  {id:'lc1',n:'Nippon India Large Cap Fund',amc:'Nippon India',cat:'Large Cap',ckey:'lc',
+   mgr:'Sailesh Raj Bhan',mexp:24,mten:14,
+   ret1y:35.8,ret3y:22.4,ret5y:22.6,ret10y:18.4,
+   sharpe:2.12,sortino:2.71,alpha:6.8,beta:0.96,stddev:15.1,treynor:0.22,infoRatio:0.96,
+   r3y:22.1,r5y:22.3,maxDD:-31.2,calmar:0.72,
+   bench:'Nifty 100 TRI',benchRet:16.8,benchBeat:true,
+   exp:0.78,aum:26340,nav:92.4,minSip:100,rating:5,style:'GARP',risk:'Moderate'},
+  {id:'lc2',n:'Canara Robeco Bluechip Equity Fund',amc:'Canara Robeco',cat:'Large Cap',ckey:'lc',
+   mgr:'Vishal Mishra',mexp:16,mten:7,
+   ret1y:31.2,ret3y:17.8,ret5y:20.1,ret10y:16.9,
+   sharpe:1.94,sortino:2.48,alpha:4.6,beta:0.91,stddev:13.6,treynor:0.21,infoRatio:0.84,
+   r3y:17.6,r5y:19.8,maxDD:-26.2,calmar:0.77,
+   bench:'Nifty 100 TRI',benchRet:16.8,benchBeat:true,
+   exp:0.39,aum:12840,nav:61.8,minSip:1000,rating:5,style:'Quality Growth',risk:'Moderate'},
+  {id:'lc3',n:'Mirae Asset Large Cap Fund',amc:'Mirae Asset',cat:'Large Cap',ckey:'lc',
+   mgr:'Gaurav Misra',mexp:18,mten:12,
+   ret1y:28.4,ret3y:16.2,ret5y:18.8,ret10y:17.2,
+   sharpe:1.82,sortino:2.31,alpha:3.4,beta:0.94,stddev:14.2,treynor:0.19,infoRatio:0.72,
+   r3y:16.4,r5y:18.6,maxDD:-28.4,calmar:0.66,
+   bench:'Nifty 100 TRI',benchRet:16.8,benchBeat:true,
+   exp:0.54,aum:37240,nav:102.4,minSip:1000,rating:5,style:'Growth',risk:'Moderate'},
+  {id:'lc4',n:'HDFC Top 100 Fund',amc:'HDFC Mutual Fund',cat:'Large Cap',ckey:'lc',
+   mgr:'Rahul Baijal',mexp:22,mten:8,
+   ret1y:26.1,ret3y:15.4,ret5y:17.9,ret10y:16.1,
+   sharpe:1.68,sortino:2.12,alpha:2.8,beta:0.97,stddev:14.8,treynor:0.17,infoRatio:0.61,
+   r3y:15.2,r5y:17.7,maxDD:-30.1,calmar:0.59,
+   bench:'Nifty 100 TRI',benchRet:16.8,benchBeat:true,
+   exp:0.75,aum:32180,nav:1028.3,minSip:500,rating:4,style:'Value',risk:'Moderate'},
+  {id:'lc5',n:'Axis Bluechip Fund',amc:'Axis Mutual Fund',cat:'Large Cap',ckey:'lc',
+   mgr:'Shreyash Devalkar',mexp:20,mten:9,
+   ret1y:22.8,ret3y:13.1,ret5y:16.4,ret10y:15.8,
+   sharpe:1.54,sortino:1.94,alpha:1.2,beta:0.88,stddev:12.8,treynor:0.18,infoRatio:0.44,
+   r3y:13.4,r5y:16.2,maxDD:-24.6,calmar:0.67,
+   bench:'Nifty 100 TRI',benchRet:16.8,benchBeat:false,
+   exp:0.55,aum:46820,nav:58.2,minSip:500,rating:4,style:'Quality',risk:'Moderate'},
+  /* FLEXI CAP */
+  {id:'fc1',n:'Parag Parikh Flexi Cap Fund',amc:'PPFAS MF',cat:'Flexi Cap',ckey:'fc',
+   mgr:'Rajeev Thakkar',mexp:28,mten:11,
+   ret1y:38.2,ret3y:21.4,ret5y:24.8,ret10y:21.6,
+   sharpe:2.28,sortino:2.94,alpha:8.4,beta:0.82,stddev:13.4,treynor:0.28,infoRatio:1.12,
+   r3y:21.2,r5y:24.4,maxDD:-22.8,calmar:1.09,
+   bench:'Nifty 500 TRI',benchRet:20.2,benchBeat:true,
+   exp:0.59,aum:78640,nav:84.6,minSip:1000,rating:5,style:'Value',risk:'Moderate'},
+  {id:'fc2',n:'HDFC Flexi Cap Fund',amc:'HDFC Mutual Fund',cat:'Flexi Cap',ckey:'fc',
+   mgr:'Roshi Jain',mexp:19,mten:6,
+   ret1y:42.1,ret3y:24.8,ret5y:23.4,ret10y:19.8,
+   sharpe:2.14,sortino:2.68,alpha:4.2,beta:0.98,stddev:16.4,treynor:0.22,infoRatio:0.88,
+   r3y:24.4,r5y:23.1,maxDD:-33.2,calmar:0.70,
+   bench:'Nifty 500 TRI',benchRet:20.2,benchBeat:true,
+   exp:0.78,aum:54280,nav:1892.4,minSip:100,rating:5,style:'Growth',risk:'Moderate-High'},
+  {id:'fc3',n:'Quant Flexi Cap Fund',amc:'Quant MF',cat:'Flexi Cap',ckey:'fc',
+   mgr:'Ankit Pande',mexp:14,mten:5,
+   ret1y:52.4,ret3y:28.6,ret5y:32.4,ret10y:22.1,
+   sharpe:2.46,sortino:3.12,alpha:12.4,beta:1.08,stddev:19.2,treynor:0.23,infoRatio:1.28,
+   r3y:28.2,r5y:31.8,maxDD:-38.4,calmar:0.84,
+   bench:'Nifty 500 TRI',benchRet:20.2,benchBeat:true,
+   exp:0.68,aum:6840,nav:96.4,minSip:1000,rating:5,style:'Quant/Momentum',risk:'High'},
+  {id:'fc4',n:'UTI Flexi Cap Fund',amc:'UTI MF',cat:'Flexi Cap',ckey:'fc',
+   mgr:'Ajay Tyagi',mexp:21,mten:10,
+   ret1y:26.4,ret3y:14.8,ret5y:18.2,ret10y:17.4,
+   sharpe:1.58,sortino:1.98,alpha:1.4,beta:0.86,stddev:13.8,treynor:0.18,infoRatio:0.42,
+   r3y:14.6,r5y:17.8,maxDD:-26.4,calmar:0.69,
+   bench:'Nifty 500 TRI',benchRet:20.2,benchBeat:false,
+   exp:0.84,aum:24180,nav:342.6,minSip:500,rating:3,style:'Quality',risk:'Moderate'},
+  /* MID CAP */
+  {id:'mc1',n:'HDFC Mid-Cap Opportunities Fund',amc:'HDFC Mutual Fund',cat:'Mid Cap',ckey:'mc',
+   mgr:'Chirag Setalvad',mexp:24,mten:16,
+   ret1y:50.4,ret3y:30.2,ret5y:30.8,ret10y:24.6,
+   sharpe:2.34,sortino:2.96,alpha:9.4,beta:0.96,stddev:18.2,treynor:0.24,infoRatio:1.04,
+   r3y:29.8,r5y:30.4,maxDD:-34.2,calmar:0.90,
+   bench:'Nifty Midcap 150 TRI',benchRet:25.6,benchBeat:true,
+   exp:0.74,aum:68420,nav:166.8,minSip:100,rating:5,style:'Growth',risk:'High'},
+  {id:'mc2',n:'Nippon India Growth Fund',amc:'Nippon India',cat:'Mid Cap',ckey:'mc',
+   mgr:'Manish Gunwani',mexp:22,mten:8,
+   ret1y:48.6,ret3y:28.4,ret5y:27.8,ret10y:23.4,
+   sharpe:2.08,sortino:2.58,alpha:5.8,beta:0.98,stddev:18.6,treynor:0.21,infoRatio:0.82,
+   r3y:28.1,r5y:27.4,maxDD:-36.8,calmar:0.75,
+   bench:'Nifty Midcap 150 TRI',benchRet:25.6,benchBeat:true,
+   exp:0.72,aum:28640,nav:3284.2,minSip:100,rating:5,style:'Growth',risk:'High'},
+  {id:'mc3',n:'Kotak Emerging Equity Fund',amc:'Kotak Mahindra',cat:'Mid Cap',ckey:'mc',
+   mgr:'Pankaj Tibrewal',mexp:20,mten:12,
+   ret1y:44.2,ret3y:26.8,ret5y:28.4,ret10y:22.8,
+   sharpe:2.18,sortino:2.72,alpha:7.2,beta:0.94,stddev:17.8,treynor:0.23,infoRatio:0.94,
+   r3y:26.4,r5y:28.1,maxDD:-35.6,calmar:0.80,
+   bench:'Nifty Midcap 150 TRI',benchRet:25.6,benchBeat:true,
+   exp:0.46,aum:46820,nav:116.4,minSip:100,rating:5,style:'Growth',risk:'High'},
+  {id:'mc4',n:'Axis Midcap Fund',amc:'Axis Mutual Fund',cat:'Mid Cap',ckey:'mc',
+   mgr:'Shreyash Devalkar',mexp:20,mten:8,
+   ret1y:38.4,ret3y:21.4,ret5y:24.6,ret10y:21.2,
+   sharpe:1.88,sortino:2.36,alpha:3.2,beta:0.88,stddev:15.6,treynor:0.21,infoRatio:0.68,
+   r3y:21.1,r5y:24.2,maxDD:-28.4,calmar:0.86,
+   bench:'Nifty Midcap 150 TRI',benchRet:25.6,benchBeat:false,
+   exp:0.54,aum:24180,nav:94.6,minSip:500,rating:4,style:'Quality Growth',risk:'Moderate-High'},
+  /* SMALL CAP */
+  {id:'sc1',n:'Nippon India Small Cap Fund',amc:'Nippon India',cat:'Small Cap',ckey:'sc',
+   mgr:'Samir Rachh',mexp:22,mten:11,
+   ret1y:48.2,ret3y:32.4,ret5y:36.8,ret10y:28.4,
+   sharpe:2.24,sortino:2.84,alpha:10.4,beta:0.92,stddev:21.4,treynor:0.24,infoRatio:1.08,
+   r3y:32.1,r5y:36.2,maxDD:-44.2,calmar:0.83,
+   bench:'Nifty Smallcap 250 TRI',benchRet:28.4,benchBeat:true,
+   exp:0.67,aum:54620,nav:192.4,minSip:100,rating:5,style:'Growth',risk:'Very High'},
+  {id:'sc2',n:'Quant Small Cap Fund',amc:'Quant MF',cat:'Small Cap',ckey:'sc',
+   mgr:'Ankit Pande',mexp:14,mten:4,
+   ret1y:64.4,ret3y:38.4,ret5y:44.2,ret10y:29.8,
+   sharpe:2.58,sortino:3.28,alpha:16.4,beta:1.04,stddev:24.8,treynor:0.25,infoRatio:1.42,
+   r3y:38.1,r5y:43.6,maxDD:-48.6,calmar:0.91,
+   bench:'Nifty Smallcap 250 TRI',benchRet:28.4,benchBeat:true,
+   exp:0.62,aum:22640,nav:284.6,minSip:1000,rating:5,style:'Quant/Momentum',risk:'Very High'},
+  {id:'sc3',n:'HDFC Small Cap Fund',amc:'HDFC Mutual Fund',cat:'Small Cap',ckey:'sc',
+   mgr:'Chirag Setalvad',mexp:24,mten:10,
+   ret1y:52.4,ret3y:34.8,ret5y:38.6,ret10y:27.4,
+   sharpe:2.38,sortino:2.98,alpha:12.4,beta:0.94,stddev:22.4,treynor:0.25,infoRatio:1.16,
+   r3y:34.4,r5y:38.2,maxDD:-45.8,calmar:0.84,
+   bench:'Nifty Smallcap 250 TRI',benchRet:28.4,benchBeat:true,
+   exp:0.62,aum:32480,nav:142.8,minSip:100,rating:5,style:'Growth',risk:'Very High'},
+  {id:'sc4',n:'SBI Small Cap Fund',amc:'SBI Mutual Fund',cat:'Small Cap',ckey:'sc',
+   mgr:'R Srinivasan',mexp:26,mten:14,
+   ret1y:42.8,ret3y:28.6,ret5y:34.2,ret10y:26.8,
+   sharpe:2.08,sortino:2.64,alpha:8.2,beta:0.88,stddev:19.8,treynor:0.24,infoRatio:0.96,
+   r3y:28.2,r5y:33.8,maxDD:-42.6,calmar:0.80,
+   bench:'Nifty Smallcap 250 TRI',benchRet:28.4,benchBeat:true,
+   exp:0.64,aum:28840,nav:184.6,minSip:500,rating:5,style:'Growth',risk:'Very High'},
+  /* ELSS */
+  {id:'el1',n:'Quant ELSS Tax Saver Fund',amc:'Quant MF',cat:'ELSS',ckey:'el',
+   mgr:'Sanjeev Sharma',mexp:18,mten:5,
+   ret1y:58.4,ret3y:34.8,ret5y:38.4,ret10y:24.6,
+   sharpe:2.64,sortino:3.34,alpha:18.4,beta:1.06,stddev:22.4,treynor:0.25,infoRatio:1.48,
+   r3y:34.4,r5y:38.0,maxDD:-44.2,calmar:0.87,
+   bench:'Nifty 500 TRI',benchRet:20.2,benchBeat:true,
+   exp:0.52,aum:9840,nav:432.6,minSip:500,rating:5,style:'Quant',risk:'High'},
+  {id:'el2',n:'Mirae Asset Tax Saver Fund',amc:'Mirae Asset',cat:'ELSS',ckey:'el',
+   mgr:'Neelesh Surana',mexp:22,mten:9,
+   ret1y:36.4,ret3y:20.8,ret5y:24.2,ret10y:20.4,
+   sharpe:2.08,sortino:2.62,alpha:6.4,beta:0.92,stddev:15.4,treynor:0.23,infoRatio:0.94,
+   r3y:20.4,r5y:23.8,maxDD:-30.2,calmar:0.80,
+   bench:'Nifty 500 TRI',benchRet:20.2,benchBeat:true,
+   exp:0.46,aum:24840,nav:48.4,minSip:500,rating:5,style:'Growth',risk:'Moderate-High'},
+  {id:'el3',n:'Axis Long Term Equity Fund',amc:'Axis Mutual Fund',cat:'ELSS',ckey:'el',
+   mgr:'Jinesh Gopani',mexp:20,mten:12,
+   ret1y:24.8,ret3y:13.4,ret5y:17.2,ret10y:18.8,
+   sharpe:1.48,sortino:1.86,alpha:0.8,beta:0.86,stddev:13.2,treynor:0.17,infoRatio:0.34,
+   r3y:13.2,r5y:17.0,maxDD:-24.8,calmar:0.69,
+   bench:'Nifty 500 TRI',benchRet:20.2,benchBeat:false,
+   exp:0.55,aum:36840,nav:78.4,minSip:500,rating:3,style:'Quality',risk:'Moderate'},
+  /* HYBRID */
+  {id:'hy1',n:'HDFC Balanced Advantage Fund',amc:'HDFC Mutual Fund',cat:'Hybrid',ckey:'hy',
+   mgr:'Prashant Jain',mexp:32,mten:18,
+   ret1y:38.4,ret3y:22.8,ret5y:20.6,ret10y:16.2,
+   sharpe:2.08,sortino:2.62,alpha:6.4,beta:0.82,stddev:12.8,treynor:0.25,infoRatio:1.02,
+   r3y:22.4,r5y:20.4,maxDD:-24.2,calmar:0.85,
+   bench:'Nifty 50 TRI',benchRet:16.2,benchBeat:true,
+   exp:0.74,aum:88640,nav:492.6,minSip:100,rating:5,style:'Dynamic AA',risk:'Moderate'},
+  {id:'hy2',n:'ICICI Pru Balanced Advantage Fund',amc:'ICICI Prudential',cat:'Hybrid',ckey:'hy',
+   mgr:'Sankaran Naren',mexp:30,mten:14,
+   ret1y:28.4,ret3y:18.4,ret5y:18.2,ret10y:14.8,
+   sharpe:1.98,sortino:2.48,alpha:4.8,beta:0.76,stddev:11.2,treynor:0.26,infoRatio:0.94,
+   r3y:18.2,r5y:18.0,maxDD:-20.4,calmar:0.89,
+   bench:'Nifty 50 TRI',benchRet:16.2,benchBeat:true,
+   exp:0.72,aum:56840,nav:68.4,minSip:100,rating:5,style:'Dynamic AA',risk:'Moderate'},
+  /* INDEX */
+  {id:'ix1',n:'UTI Nifty 50 Index Fund',amc:'UTI MF',cat:'Index',ckey:'ix',
+   mgr:'Sharwan Kumar Goyal',mexp:18,mten:8,
+   ret1y:24.8,ret3y:15.2,ret5y:16.4,ret10y:14.8,
+   sharpe:1.46,sortino:1.82,alpha:0.1,beta:1.00,stddev:13.8,treynor:0.16,infoRatio:0.08,
+   r3y:15.0,r5y:16.2,maxDD:-29.4,calmar:0.55,
+   bench:'Nifty 50 TRI',benchRet:16.2,benchBeat:false,
+   exp:0.08,aum:18640,nav:142.6,minSip:500,rating:4,style:'Passive',risk:'Moderate'},
+  {id:'ix2',n:'Motilal Oswal Nifty Midcap 150 Index',amc:'Motilal Oswal',cat:'Index',ckey:'ix',
+   mgr:'Swapnil Mayekar',mexp:14,mten:5,
+   ret1y:50.4,ret3y:28.8,ret5y:28.6,ret10y:0,
+   sharpe:2.02,sortino:2.52,alpha:0.2,beta:1.00,stddev:19.8,treynor:0.20,infoRatio:0.06,
+   r3y:28.4,r5y:28.2,maxDD:-38.4,calmar:0.74,
+   bench:'Nifty Midcap 150 TRI',benchRet:28.4,benchBeat:false,
+   exp:0.17,aum:4840,nav:32.4,minSip:500,rating:4,style:'Passive',risk:'High'},
+  {id:'ix3',n:'Navi Nifty 50 Index Fund',amc:'Navi MF',cat:'Index',ckey:'ix',
+   mgr:'Aditya Pagaria',mexp:12,mten:4,
+   ret1y:24.6,ret3y:15.0,ret5y:16.1,ret10y:0,
+   sharpe:1.44,sortino:1.80,alpha:0.0,beta:1.00,stddev:13.8,treynor:0.16,infoRatio:0.02,
+   r3y:14.8,r5y:15.9,maxDD:-29.6,calmar:0.54,
+   bench:'Nifty 50 TRI',benchRet:16.2,benchBeat:false,
+   exp:0.06,aum:1240,nav:18.4,minSip:10,rating:4,style:'Passive',risk:'Moderate'},
+  /* DEBT */
+  {id:'db1',n:'HDFC Short Duration Fund',amc:'HDFC Mutual Fund',cat:'Debt',ckey:'db',
+   mgr:'Anupam Joshi',mexp:16,mten:6,
+   ret1y:8.4,ret3y:6.8,ret5y:7.2,ret10y:7.8,
+   sharpe:1.12,sortino:1.42,alpha:0.8,beta:0.24,stddev:2.4,treynor:0.18,infoRatio:0.62,
+   r3y:6.6,r5y:7.0,maxDD:-2.8,calmar:2.57,
+   bench:'CRISIL Short Duration TRI',benchRet:6.8,benchBeat:true,
+   exp:0.32,aum:14840,nav:30.2,minSip:100,rating:4,style:'Short Duration',risk:'Low'},
+  {id:'db2',n:'Parag Parikh Conservative Hybrid',amc:'PPFAS MF',cat:'Debt',ckey:'db',
+   mgr:'Raunak Onkar',mexp:14,mten:6,
+   ret1y:14.8,ret3y:10.4,ret5y:11.2,ret10y:0,
+   sharpe:1.68,sortino:2.04,alpha:2.4,beta:0.38,stddev:5.4,treynor:0.26,infoRatio:0.84,
+   r3y:10.2,r5y:11.0,maxDD:-7.4,calmar:1.51,
+   bench:'CRISIL Hybrid 85+15 TRI',benchRet:9.2,benchBeat:true,
+   exp:0.58,aum:2840,nav:22.4,minSip:1000,rating:5,style:'Conservative Hybrid',risk:'Low-Moderate'},
+  /* SECTORAL */
+  {id:'se1',n:'SBI Technology Opportunities Fund',amc:'SBI Mutual Fund',cat:'Sectoral',ckey:'se',
+   mgr:'Tanmaya Desai',mexp:16,mten:6,
+   ret1y:44.8,ret3y:22.4,ret5y:30.4,ret10y:24.8,
+   sharpe:1.94,sortino:2.44,alpha:8.4,beta:1.12,stddev:22.8,treynor:0.17,infoRatio:0.82,
+   r3y:22.1,r5y:30.0,maxDD:-42.8,calmar:0.71,
+   bench:'Nifty IT TRI',benchRet:26.4,benchBeat:true,
+   exp:0.96,aum:4840,nav:224.8,minSip:500,rating:4,style:'Sectoral',risk:'Very High'},
+  {id:'se2',n:'Nippon India Pharma Fund',amc:'Nippon India',cat:'Sectoral',ckey:'se',
+   mgr:'Sailesh Raj Bhan',mexp:24,mten:12,
+   ret1y:38.2,ret3y:18.4,ret5y:24.6,ret10y:18.8,
+   sharpe:1.76,sortino:2.22,alpha:6.2,beta:0.88,stddev:18.4,treynor:0.20,infoRatio:0.78,
+   r3y:18.2,r5y:24.2,maxDD:-38.4,calmar:0.64,
+   bench:'Nifty Pharma TRI',benchRet:20.4,benchBeat:true,
+   exp:0.98,aum:7240,nav:368.4,minSip:100,rating:4,style:'Sectoral',risk:'Very High'},
+];
+
+const CATS = ['All','Large Cap','Flexi Cap','Mid Cap','Small Cap','ELSS','Index','Hybrid','Debt','Sectoral'];
+const CATCLS = {
+  'Large Cap':'c-lc','Flexi Cap':'c-fc','Mid Cap':'c-mc','Small Cap':'c-sc',
+  'ELSS':'c-el','Hybrid':'c-hy','Debt':'c-db','Index':'c-ix','Sectoral':'c-se'
+};
+
+const GLOSSARY = [
+  {term:'Sharpe Ratio',formula:'(Rp - Rf) / σp',
+   what:'Measures risk-adjusted return. How much extra return you get per unit of total risk.',
+   good:'> 2.0',ok:'1.5–2.0',bad:'< 1.5',
+   note:'Higher is always better. Top Indian equity funds typically show 1.8–2.6.'},
+  {term:'Sortino Ratio',formula:'(Rp - Rf) / σdown',
+   what:'Like Sharpe but only penalises downside volatility — a more investor-friendly measure.',
+   good:'> 2.5',ok:'1.8–2.5',bad:'< 1.8',
+   note:'Preferred over Sharpe for skewed return distributions common in mid/small cap funds.'},
+  {term:'Alpha (Jensen\'s)',formula:'Rp - [Rf + β(Rm - Rf)]',
+   what:'Excess return over what the benchmark model predicted. The fund manager\'s true value-add.',
+   good:'> 4%',ok:'1–4%',bad:'< 1%',
+   note:'A consistent positive alpha is the clearest sign of fund manager skill.'},
+  {term:'Beta',formula:'Cov(Rp, Rm) / Var(Rm)',
+   what:'Sensitivity to market movements. Beta=1 means the fund moves exactly with the market.',
+   good:'0.85–0.95',ok:'0.95–1.05',bad:'> 1.1 or < 0.7',
+   note:'Lower beta = less market risk but also potentially lower returns in bull markets.'},
+  {term:'Standard Deviation',formula:'√[Σ(Ri - R̄)² / (n-1)]',
+   what:'Annualised volatility of returns. Measures how widely returns fluctuate around average.',
+   good:'< 14%',ok:'14–20%',bad:'> 20%',
+   note:'Large/flexi cap funds: 12–16%. Mid cap: 16–20%. Small cap: 20–26%.'},
+  {term:'Information Ratio',formula:'(Rp - Rb) / Tracking Error',
+   what:'Consistency of outperformance over the benchmark. Combines magnitude and consistency.',
+   good:'> 1.0',ok:'0.5–1.0',bad:'< 0.5',
+   note:'An IR > 0.5 sustained over 5 years indicates genuine skill, not luck.'},
+  {term:'Treynor Ratio',formula:'(Rp - Rf) / β',
+   what:'Return earned per unit of market (systematic) risk. Useful for diversified portfolios.',
+   good:'> 0.24',ok:'0.16–0.24',bad:'< 0.16',
+   note:'Best used to compare funds within the same category.'},
+  {term:'Maximum Drawdown',formula:'(Trough - Peak) / Peak',
+   what:'The largest peak-to-trough decline in fund NAV. Measures worst-case loss scenario.',
+   good:'> -25%',ok:'-25 to -35%',bad:'< -35%',
+   note:'Small cap funds routinely see -40 to -55% in bear markets. Know before you invest.'},
+  {term:'Calmar Ratio',formula:'CAGR / |Max Drawdown|',
+   what:'Annual return relative to worst drawdown. Higher = better recovery from losses.',
+   good:'> 0.85',ok:'0.6–0.85',bad:'< 0.6',
+   note:'Especially useful for evaluating mid and small cap funds over full market cycles.'},
+  {term:'Rolling Returns',formula:'CAGR computed over rolling windows',
+   what:'Returns computed over every possible 1Y/3Y/5Y window in history. More robust than point-to-point.',
+   good:'Consistent > benchmark',ok:'Beats benchmark 60%+ of windows',bad:'Erratic or lags benchmark',
+   note:'Rolling 3Y and 5Y are the most reliable performance metrics for equity MF selection.'},
+];
+
+/* ════════════════════════════════════════════════
+   STATE
+════════════════════════════════════════════════ */
+let activeCat = 'All';
+let sortKey   = 'sharpe';
+let sortAsc   = false;
+let rankBy    = 'composite';
+let cmpSlots  = [null, null, null];
+
+/* ════════════════════════════════════════════════
+   TAB
+════════════════════════════════════════════════ */
+const TABS = ['explorer','portfolio','compare','rankings','glossary'];
+function gTab(id) {
+  TABS.forEach(t => {
+    document.getElementById('tp-'+t).classList.toggle('on', t===id);
+    document.querySelectorAll('.nav-tab').forEach((b,i)=>b.classList.toggle('on',TABS[i]===id));
+  });
+  if(id==='compare')  renderCompare();
+  if(id==='rankings') renderRankings();
+  if(id==='glossary') renderGlossary();
+}
+
+/* ════════════════════════════════════════════════
+   EXPLORER
+════════════════════════════════════════════════ */
+function buildExplorerKPI() {
+  const n = DB.length;
+  const avgSharpe = (DB.reduce((s,f)=>s+f.sharpe,0)/n).toFixed(2);
+  const topRet = Math.max(...DB.map(f=>f.ret5y)).toFixed(1);
+  const beaters = DB.filter(f=>f.benchBeat).length;
+  const kpis = [
+    {l:'Funds Covered',v:n,s:'In database',c:'var(--teal)'},
+    {l:'Avg Sharpe',v:avgSharpe,s:'Universe average',c:'var(--sky)'},
+    {l:'Best 5Y Return',v:topRet+'%',s:'Quant Small Cap',c:'var(--lime)'},
+    {l:'Benchmark Beaters',v:beaters+'/'+n,s:'5Y outperformers',c:'var(--amber)'},
+    {l:'Categories',v:9,s:'Asset categories',c:'var(--violet)'},
+  ];
+  document.getElementById('exKPI').innerHTML = kpis.map(k=>`
+    <div class="stat-tile" style="--tile-color:${k.c}">
+      <div class="stat-tile-label">${k.l}</div>
+      <div class="stat-tile-val">${k.v}</div>
+      <div class="stat-tile-sub">${k.s}</div>
+    </div>`).join('');
+}
+
+function buildCatChips() {
+  document.getElementById('catChips').innerHTML = CATS.map(c=>`
+    <div class="chip ${c==='All'?'on':''}" onclick="setCat('${c}',this)">${c}</div>`).join('');
+}
+
+function setCat(c, el) {
+  activeCat = c;
+  document.querySelectorAll('#catChips .chip').forEach(x=>x.classList.remove('on'));
+  el.classList.add('on');
+  drawTable();
+}
+
+function setSort(k) {
+  sortAsc = (sortKey===k) ? !sortAsc : false;
+  sortKey = k;
+  drawTable();
+}
+
+function clsV(v, threshGood, threshOk, higher=true) {
+  if(higher) return v>=threshGood?'g':v>=threshOk?'y':'r';
+  return v<=threshGood?'g':v<=threshOk?'y':'r';
+}
+
+function fmtAUM(n) {
+  if(n>=10000) return (n/10000).toFixed(1)+'TCr';
+  if(n>=100)   return (n/100).toFixed(0)+'Cr';
+  return n+'Cr (₹'+n+'Cr)';
+}
+function fmtAUMShort(n) {
+  if(n>=10000) return (n/10000).toFixed(1)+'T';
+  if(n>=1000)  return (n/1000).toFixed(1)+'K';
+  return n;
+}
+
+function starsHtml(n) {
+  return `<span class="stars">${'★'.repeat(n)}${'☆'.repeat(5-n)}</span>`;
+}
+
+function initials(name) {
+  return name.split(' ').slice(0,2).map(w=>w[0]).join('');
+}
+
+function drawTable() {
+  const q  = (document.getElementById('fsearch')?.value||'').toLowerCase();
+  const sk = document.getElementById('fsort')?.value || sortKey;
+  const mr = parseInt(document.getElementById('frating')?.value||0);
+  const bb = document.getElementById('fbench')?.value || '';
+  if(sk !== sortKey) { sortKey=sk; sortAsc=false; }
+
+  let funds = DB.filter(f=>{
+    if(activeCat!=='All' && f.cat!==activeCat) return false;
+    if(q && !f.n.toLowerCase().includes(q) && !f.amc.toLowerCase().includes(q)) return false;
+    if(mr && f.rating < mr) return false;
+    if(bb==='beat' && !f.benchBeat) return false;
+    if(bb==='lag'  &&  f.benchBeat) return false;
+    return true;
+  }).sort((a,b)=>{
+    const av=a[sortKey]??0, bv=b[sortKey]??0;
+    return sortAsc ? av-bv : bv-av;
+  });
+
+  document.getElementById('tableCount').textContent = `Showing ${funds.length} of ${DB.length} funds`;
+
+  document.getElementById('tbl-body').innerHTML = funds.length ? funds.map((f,i)=>{
+    const rc1=clsV(f.ret1y,25,15);
+    const rc3=clsV(f.ret3y,18,12);
+    const rc5=clsV(f.ret5y,20,15);
+    const rc10=f.ret10y>0?clsV(f.ret10y,18,12):'';
+    return `<tr onclick="openSlide('${f.id}')" style="cursor:pointer">
+      <td><div class="rk ${i<1?'rk1':i<2?'rk2':i<3?'rk3':'rk-n'}">${i+1}</div></td>
+      <td>
+        <div class="fn">${f.n}</div>
+        <div class="fa">${f.amc} &nbsp;·&nbsp; <span class="bdg ${f.benchBeat?'bdg-g':'bdg-r'}">${f.benchBeat?'▲ Beats':'▼ Lags'} Benchmark</span></div>
+        <div class="fm">👤 ${f.mgr} &nbsp;·&nbsp; ${f.mexp}y exp &nbsp;·&nbsp; ${f.mten}y tenure</div>
+      </td>
+      <td><span class="bdg ${CATCLS[f.cat]||''}">${f.cat}</span></td>
+      <td><span class="mv ${rc1}">${f.ret1y}%</span></td>
+      <td><span class="mv ${rc3}">${f.ret3y}%</span></td>
+      <td><span class="mv ${rc5}">${f.ret5y}%</span></td>
+      <td><span class="mv ${rc10}">${f.ret10y>0?f.ret10y+'%':'—'}</span></td>
+      <td><span class="mv ${clsV(f.sharpe,2,1.5)}">${f.sharpe}</span></td>
+      <td><span class="mv ${clsV(f.sortino,2.5,1.8)}">${f.sortino}</span></td>
+      <td><span class="mv ${f.alpha>0?'g':f.alpha>-1?'y':'r'}">${f.alpha>0?'+':''}${f.alpha}%</span></td>
+      <td><span class="mv ${f.beta<0.95?'g':f.beta>1.05?'y':'r'}">${f.beta}</span></td>
+      <td><span class="mv ${clsV(f.stddev,14,20,false)}">${f.stddev}%</span></td>
+      <td><span class="mv ${clsV(f.infoRatio,1,0.5)}">${f.infoRatio}</span></td>
+      <td><span class="mv ${clsV(Math.abs(f.maxDD),25,35,false)}">${f.maxDD}%</span></td>
+      <td><span class="mv ${clsV(f.exp,0.5,0.8,false)}">${f.exp}%</span></td>
+      <td><span class="mv b">${fmtAUMShort(f.aum)}Cr</span></td>
+      <td>${starsHtml(f.rating)}</td>
+      <td style="font-size:10.5px;color:var(--text3);">${f.bench.replace(' TRI','')}</td>
+    </tr>`;
+  }).join('') : `<tr><td colspan="18" style="text-align:center;padding:48px;color:var(--text3);">No funds match your filters</td></tr>`;
+}
+
+/* ════════════════════════════════════════════════
+   SLIDE PANEL
+════════════════════════════════════════════════ */
+function openSlide(id) {
+  const f = DB.find(x=>x.id===id);
+  if(!f) return;
+
+  document.getElementById('sl-name').textContent = f.n;
+  document.getElementById('sl-meta').innerHTML = `
+    <span class="bdg ${CATCLS[f.cat]||''}">${f.cat}</span>
+    <span class="bdg ${f.benchBeat?'bdg-g':'bdg-r'}">${f.benchBeat?'▲ Beats':'▼ Lags'} Benchmark</span>
+    <span class="bdg bdg-y">${'★'.repeat(f.rating)} ${f.rating}/5</span>
+    <span class="bdg bdg-v">${f.risk}</span>`;
+
+  const alts = DB.filter(x=>x.cat===f.cat&&x.id!==f.id&&x.sharpe>f.sharpe).sort((a,b)=>b.sharpe-a.sharpe).slice(0,2);
+
+  document.getElementById('sl-body').innerHTML = `
+    <!-- Manager -->
+    <div class="card mb16">
+      <div class="card-t"><div class="dot" style="background:var(--teal)"></div>Fund Manager</div>
+      <div class="flex gap12 items-center">
+        <div style="width:46px;height:46px;border-radius:10px;flex-shrink:0;
+          background:conic-gradient(var(--teal),var(--sky),var(--violet),var(--teal));
+          display:flex;align-items:center;justify-content:center;
+          font-family:'JetBrains Mono',monospace;font-size:14px;font-weight:600;color:#000;">
+          ${initials(f.mgr)}
+        </div>
+        <div>
+          <div style="font-weight:700;color:var(--white);font-size:15px;">${f.mgr}</div>
+          <div style="font-size:11.5px;color:var(--text2);margin-top:2px;">${f.mexp} years industry exp &nbsp;·&nbsp; ${f.mten} years managing this fund</div>
+          <div style="margin-top:7px;display:flex;gap:7px;flex-wrap:wrap;">
+            <span class="bdg ${f.mexp>=20?'bdg-g':f.mexp>=15?'bdg-y':'bdg-r'}">${f.mexp>=20?'Highly Experienced':f.mexp>=15?'Experienced':'Growing'}</span>
+            <span class="bdg bdg-b">Tenure: ${f.mten}Y</span>
+            <span class="bdg bdg-y">${f.style}</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Ratios -->
+    <div class="mb16">
+      <div style="font-family:'JetBrains Mono',monospace;font-size:9px;letter-spacing:.14em;text-transform:uppercase;color:var(--text3);margin-bottom:10px;display:flex;align-items:center;gap:8px;">Risk-Return Ratios<span style="flex:1;height:1px;background:var(--border);"></span></div>
+      <div class="rg">
+        ${[
+          ['Sharpe',f.sharpe,f.sharpe>=2?'g':f.sharpe>=1.5?'y':'r','vs category avg ~1.9'],
+          ['Sortino',f.sortino,f.sortino>=2.5?'g':f.sortino>=1.8?'y':'r','Downside-adjusted'],
+          ['Alpha',f.alpha+'%',f.alpha>0?'g':f.alpha>-1?'y':'r','vs '+f.bench.replace(' TRI','')],
+          ['Beta',f.beta,f.beta<0.95?'g':f.beta>1.1?'r':'y','Market sensitivity'],
+          ['Std Dev',f.stddev+'%',f.stddev<15?'g':f.stddev<20?'y':'r','Annual volatility'],
+          ['Info Ratio',f.infoRatio,f.infoRatio>=1?'g':f.infoRatio>=0.5?'y':'r','Consistency'],
+          ['Treynor',f.treynor,f.treynor>=0.22?'g':f.treynor>=0.16?'y':'r','Return per β'],
+          ['Max Drawdown',f.maxDD+'%','r','Worst loss'],
+          ['Calmar',f.calmar,f.calmar>=0.85?'g':f.calmar>=0.6?'y':'r','Ret/MaxDD'],
+        ].map(([l,v,c,note])=>`
+          <div class="rc">
+            <div class="rc-label">${l}</div>
+            <div class="rc-val ${c}">${v}</div>
+            <div class="rc-note">${note}</div>
+          </div>`).join('')}
+      </div>
+    </div>
+
+    <!-- Returns table -->
+    <div class="card mb16">
+      <div class="card-t"><div class="dot" style="background:var(--amber)"></div>Returns vs Benchmark</div>
+      <table class="rt">
+        <thead><tr><th>Period</th><th>${f.n.split(' ').slice(0,3).join(' ')}</th><th>${f.bench.replace(' TRI','')}</th><th>Alpha</th><th>Beat?</th></tr></thead>
+        <tbody>
+          ${[
+            ['1 Year', f.ret1y, +(f.benchRet*0.88).toFixed(1)],
+            ['3 Year', f.ret3y, +(f.benchRet*0.92).toFixed(1)],
+            ['5 Year', f.ret5y, +f.benchRet.toFixed(1)],
+            ['Rolling 3Y', f.r3y, +(f.benchRet*0.90).toFixed(1)],
+            ['Rolling 5Y', f.r5y, +(f.benchRet*0.96).toFixed(1)],
+          ].map(([p,r,b],idx)=>{
+            const a=(r-b).toFixed(1);
+            const beat=r>b;
+            return `<tr ${idx>=3?'class="hl"':''}>
+              <td>${p}</td>
+              <td style="font-weight:600;color:${r>=20?'#34d399':r>=12?'var(--amber)':'var(--rose)'}">${r.toFixed(1)}%</td>
+              <td style="color:var(--text3);">${b.toFixed(1)}%</td>
+              <td style="color:${beat?'#34d399':'var(--rose)'};font-weight:600;">${beat?'+':''}${a}%</td>
+              <td><span class="bdg ${beat?'bdg-g':'bdg-r'}">${beat?'✓':'✗'}</span></td>
+            </tr>`;
+          }).join('')}
+        </tbody>
+      </table>
+    </div>
+
+    <!-- Fund Facts -->
+    <div class="card mb16">
+      <div class="card-t"><div class="dot" style="background:var(--violet)"></div>Fund Details</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
+        ${[
+          ['AMC',f.amc],['AUM','₹'+fmtAUMShort(f.aum)+' Cr'],
+          ['NAV','₹'+f.nav],['Expense Ratio',f.exp+'%'],
+          ['Min SIP','₹'+f.minSip],['Style',f.style],
+          ['Risk Level',f.risk],['Benchmark',f.bench],
+        ].map(([l,v])=>`
+          <div style="padding:8px 10px;background:var(--ink3);border-radius:7px;">
+            <div style="font-family:'JetBrains Mono',monospace;font-size:9px;letter-spacing:.08em;text-transform:uppercase;color:var(--text3);margin-bottom:2px;">${l}</div>
+            <div style="font-weight:600;color:var(--text);font-size:12.5px;">${v}</div>
+          </div>`).join('')}
+      </div>
+    </div>
+
+    ${alts.length?`
+    <!-- Alternatives -->
+    <div style="background:rgba(56,189,248,.05);border:1px solid rgba(56,189,248,.18);border-radius:12px;padding:15px 17px;">
+      <div style="font-family:'JetBrains Mono',monospace;font-size:9px;letter-spacing:.14em;text-transform:uppercase;color:var(--sky);margin-bottom:11px;">💡 Better Alternatives in ${f.cat}</div>
+      ${alts.map(a=>`
+        <div class="alt-box mb8" onclick="openSlide('${a.id}')" style="cursor:pointer;">
+          <div style="font-weight:700;color:var(--white);font-size:13px;margin-bottom:4px;">${a.n}</div>
+          <div style="font-size:11px;color:var(--text2);">👤 ${a.mgr} · ${a.mexp}y exp</div>
+          <div style="display:flex;gap:18px;font-size:12px;margin-top:7px;flex-wrap:wrap;">
+            <span>Sharpe <span class="g" style="font-weight:700;">${a.sharpe}</span> vs <span class="r">${f.sharpe}</span></span>
+            <span>5Y <span class="g" style="font-weight:700;">${a.ret5y}%</span> vs <span class="r">${f.ret5y}%</span></span>
+            <span>Alpha <span class="g" style="font-weight:700;">+${a.alpha}%</span></span>
+          </div>
+        </div>`).join('')}
+    </div>` : `
+    <div style="background:rgba(52,211,153,.05);border:1px solid rgba(52,211,153,.18);border-radius:10px;padding:12px 14px;font-size:12.5px;color:#34d399;">
+      ✓ ${f.n.split(' ').slice(0,3).join(' ')} is already among the best in its category.
+    </div>`}
+
+    <div style="margin-top:14px;display:flex;gap:8px;flex-wrap:wrap;">
+      <button class="btn btn-teal" onclick="addToCmp('${f.id}');closeSlide();gTab('compare');">⚖ Add to Compare</button>
+    </div>
+  `;
+
+  document.getElementById('slide').classList.add('open');
+  document.getElementById('bd').classList.add('show');
+}
+
+function closeSlide() {
+  document.getElementById('slide').classList.remove('open');
+  document.getElementById('bd').classList.remove('show');
+}
+
+/* ════════════════════════════════════════════════
+   PORTFOLIO
+════════════════════════════════════════════════ */
+function dzOver(e){ e.preventDefault(); document.getElementById('dropZone').classList.add('dz-over'); }
+function dzLeave(){ document.getElementById('dropZone').classList.remove('dz-over'); }
+function dzDrop(e){
+  e.preventDefault(); dzLeave();
+  const f=e.dataTransfer.files[0]; if(f) processPortFile(f);
+}
+function onPortFile(e){
+  const f=e.target.files[0]; if(f) processPortFile(f);
+  e.target.value='';
+}
+function processPortFile(file){
+  const nm=file.name.toLowerCase();
+  const reader=new FileReader();
+  reader.onload=function(e){
+    try{
+      let rows;
+      if(nm.endsWith('.csv')){
+        rows=e.target.result.split(/\r?\n/).map(r=>r.split(',').map(c=>c.trim().replace(/^"|"$/g,'')));
+      } else {
+        const wb=XLSX.read(e.target.result,{type:'binary'});
+        const ws=wb.Sheets[wb.SheetNames[0]];
+        rows=XLSX.utils.sheet_to_json(ws,{header:1,defval:''});
+      }
+      parsePort(rows);
+    } catch(err){ alert('Could not read file: '+err.message); }
+  };
+  if(nm.endsWith('.csv')) reader.readAsText(file);
+  else reader.readAsBinaryString(file);
+}
+function matchFund(name){
+  const n=name.toLowerCase();
+  let best=null, bs=0;
+  DB.forEach(f=>{
+    const fn=f.n.toLowerCase();
+    let score=0;
+    fn.split(' ').forEach(w=>{ if(w.length>3&&n.includes(w)) score+=w.length; });
+    if(score>bs){bs=score;best=f;}
+  });
+  return bs>5?best:null;
+}
+function parsePort(rows){
+  const hdr=(rows[0]||[]).map(h=>(h||'').toString().toLowerCase());
+  const ni=hdr.findIndex(h=>h.includes('scheme')||h.includes('fund')||h.includes('name'));
+  const vi=hdr.findIndex(h=>h.includes('current')||h.includes('market')||h.includes('value'));
+  const ci=hdr.findIndex(h=>h.includes('cost')||h.includes('purchase')||h.includes('invest'));
+  const portfolio=[];
+  for(let i=1;i<rows.length;i++){
+    const r=rows[i];
+    const sn=(r[ni>=0?ni:0]||'').toString().trim();
+    if(!sn||sn.length<5) continue;
+    const cv=parseFloat((r[vi>=0?vi:1]||'0').toString().replace(/[^0-9.]/g,''))||0;
+    const pv=parseFloat((r[ci>=0?ci:2]||'0').toString().replace(/[^0-9.]/g,''))||0;
+    if(!cv&&!pv) continue;
+    const cur=cv||pv*1.22;
+    const cost=pv||cv*0.82;
+    portfolio.push({name:sn,cur,cost,matched:matchFund(sn),gain:cur-cost,gainPct:cost>0?((cur-cost)/cost*100):null});
+  }
+  if(!portfolio.length){ alert('No holdings found. Try "Load Sample Portfolio" to see how it works.'); return; }
+  renderPortResults(portfolio);
+}
+function dlPortTemplate(){
+  const wb=XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb,XLSX.utils.aoa_to_sheet([
+    ['Scheme Name','Current Value (Rs)','Purchase Value (Rs)','Units'],
+    ['Mirae Asset Large Cap Fund Direct Growth','185000','142000','1806'],
+    ['HDFC Mid Cap Opportunities Fund Direct Growth','94000','68000','563'],
+    ['Parag Parikh Flexi Cap Fund Direct Growth','228000','168000','2693'],
+    ['SBI Small Cap Fund Direct Growth','112000','76000','607'],
+    ['Quant ELSS Tax Saver Fund Direct Growth','84000','58000','194'],
+    ['ICICI Pru Balanced Advantage Fund Direct Growth','142000','118000','2074'],
+    ['UTI Nifty 50 Index Fund Direct Growth','96000','82000','673'],
+    ['Axis Bluechip Fund Direct Growth','54000','62000','928'],
+  ]),'Portfolio');
+  XLSX.writeFile(wb,'FundScope_Portfolio_Template.xlsx');
+}
+function loadSamplePort(){
+  parsePort([
+    ['Scheme Name','Current Value','Purchase Value'],
+    ['Mirae Asset Large Cap Fund Direct Growth','185000','142000'],
+    ['HDFC Mid Cap Opportunities Fund Direct Growth','94000','68000'],
+    ['Parag Parikh Flexi Cap Fund Direct Growth','228000','168000'],
+    ['SBI Small Cap Fund Direct Growth','112000','76000'],
+    ['Quant ELSS Tax Saver Fund Direct Growth','84000','58000'],
+    ['ICICI Pru Balanced Advantage Fund Direct Growth','142000','118000'],
+    ['UTI Nifty 50 Index Fund Direct Growth','96000','82000'],
+    ['Axis Bluechip Fund Direct Growth','54000','62000'],
+  ]);
+}
+function fmtRs(n){ if(!n||isNaN(n)) return '0'; n=Math.abs(n); if(n>=10000000) return (n/10000000).toFixed(2)+'Cr'; if(n>=100000) return (n/100000).toFixed(1)+'L'; if(n>=1000) return (n/1000).toFixed(1)+'K'; return n.toFixed(0); }
+function renderPortResults(port){
+  const totCur=port.reduce((s,h)=>s+h.cur,0);
+  const totCost=port.reduce((s,h)=>s+h.cost,0);
+  const totGain=totCur-totCost;
+  const gp=(totCost>0?(totGain/totCost*100):0).toFixed(1);
+  const matched=port.filter(h=>h.matched);
+  const beaters=matched.filter(h=>h.matched.benchBeat).length;
+
+  // KPI row
+  const kpis=[
+    {l:'Portfolio Value',v:'₹'+fmtRs(totCur),s:'Current market value',c:'var(--teal)'},
+    {l:'Amount Invested',v:'₹'+fmtRs(totCost),s:'Total purchase cost',c:'var(--sky)'},
+    {l:'Unrealised P&L',v:(totGain>=0?'+':'')+' ₹'+fmtRs(totGain)+' ('+gp+'%)',s:totGain>=0?'Overall gain':'Overall loss',c:totGain>=0?'var(--lime)':'var(--rose)'},
+    {l:'Benchmark Beaters',v:beaters+' / '+matched.length,s:'Matched funds outperforming',c:'var(--amber)'},
+  ];
+
+  // group by category
+  const byCat={};
+  port.forEach(h=>{
+    const cat=h.matched?.cat||'Unknown';
+    if(!byCat[cat]) byCat[cat]=[];
+    byCat[cat].push(h);
+  });
+
+  let html=`
+  <div class="a-kpi-row fadein">${kpis.map(k=>`
+    <div class="stat-tile" style="--tile-color:${k.c}">
+      <div class="stat-tile-label">${k.l}</div>
+      <div class="stat-tile-val" style="font-size:18px;">${k.v}</div>
+      <div class="stat-tile-sub">${k.s}</div>
+    </div>`).join('')}</div>
+
+  <!-- Holdings table -->
+  <div class="card mb24 fadein">
+    <div class="card-t"><div class="dot" style="background:var(--teal)"></div>Holdings Analysis</div>
+    <div style="overflow-x:auto;">
+    <table class="tbl">
+      <thead><tr>
+        <th>Fund Name</th><th>Category</th>
+        <th>Current Value</th><th>Invested</th><th>Gain/Loss</th>
+        <th>Sharpe</th><th>Alpha</th><th>5Y Return</th>
+        <th>Benchmark</th><th>Beat?</th><th>Rating</th>
+      </tr></thead>
+      <tbody>
+      ${port.map(h=>{
+        const f=h.matched;
+        return `<tr onclick="${f?`openSlide('${f.id}')`:'void 0'}" style="cursor:${f?'pointer':'default'}">
+          <td>
+            <div class="fn" style="font-size:12px;">${h.name.length>48?h.name.slice(0,48)+'…':h.name}</div>
+            ${f?`<div class="fa">👤 ${f.mgr} · ${f.mexp}y exp</div>`:'<div style="font-size:10.5px;color:var(--rose);">⚠ Not found in database</div>'}
+          </td>
+          <td>${f?`<span class="bdg ${CATCLS[f.cat]||''}">${f.cat}</span>`:'<span class="bdg bdg-y">Unknown</span>'}</td>
+          <td><span class="mv tl">₹${fmtRs(h.cur)}</span></td>
+          <td><span class="mv" style="color:var(--text3);">₹${fmtRs(h.cost)}</span></td>
+          <td><span class="mv ${h.gain>=0?'g':'r'}">${h.gain>=0?'+':''} ₹${fmtRs(Math.abs(h.gain))} (${h.gainPct?.toFixed(1)||'—'}%)</span></td>
+          <td>${f?`<span class="mv ${clsV(f.sharpe,2,1.5)}">${f.sharpe}</span>`:'—'}</td>
+          <td>${f?`<span class="mv ${f.alpha>0?'g':'r'}">${f.alpha>0?'+':''}${f.alpha}%</span>`:'—'}</td>
+          <td>${f?`<span class="mv ${clsV(f.ret5y,20,15)}">${f.ret5y}%</span>`:'—'}</td>
+          <td style="font-size:10.5px;color:var(--text3);">${f?f.bench.replace(' TRI',''):'—'}</td>
+          <td>${f?`<span class="bdg ${f.benchBeat?'bdg-g':'bdg-r'}">${f.benchBeat?'✓ Yes':'✗ No'}</span>`:'—'}</td>
+          <td>${f?starsHtml(f.rating):'—'}</td>
+        </tr>`;
+      }).join('')}
+      </tbody>
+    </table>
+    </div>
+  </div>
+
+  <!-- Category analysis + alternatives -->
+  <div class="card mb24 fadein">
+    <div class="card-t"><div class="dot" style="background:var(--sky)"></div>Category Analysis & Better Alternatives</div>
+    ${Object.entries(byCat).filter(([c])=>c!=='Unknown').map(([cat,funds])=>{
+      const matchedF=funds.filter(h=>h.matched);
+      const avgSh=matchedF.length?matchedF.reduce((s,h)=>s+h.matched.sharpe,0)/matchedF.length:0;
+      const bestDB=DB.filter(f=>f.cat===cat).sort((a,b)=>b.sharpe-a.sharpe).slice(0,2);
+      const needUpgrade=bestDB.length&&bestDB[0].sharpe>avgSh+0.1;
+      return `
+      <div style="padding:15px;background:var(--ink3);border-radius:10px;border:1px solid var(--border);margin-bottom:14px;">
+        <div class="flex items-center justify-between mb8" style="flex-wrap:wrap;gap:8px;">
+          <div class="flex gap8 items-center">
+            <span class="bdg ${CATCLS[cat]||''}" style="font-size:11px;padding:4px 11px;">${cat}</span>
+            <span style="font-size:12px;color:var(--text2);">${funds.length} fund${funds.length>1?'s':''} · Avg Sharpe <span class="${clsV(avgSh,2,1.5)}" style="font-weight:700;">${avgSh.toFixed(2)}</span></span>
+          </div>
+        </div>
+        ${funds.map(h=>`
+          <div class="fund-row">
+            <div style="flex:1;min-width:0;">
+              <div style="font-size:12.5px;font-weight:600;color:var(--white);">${h.name.length>55?h.name.slice(0,55)+'…':h.name}</div>
+              ${h.matched?`<div style="font-size:11px;color:var(--text3);margin-top:3px;">
+                Sharpe: ${h.matched.sharpe} · Alpha: ${h.matched.alpha>0?'+':''}${h.matched.alpha}% · 5Y: ${h.matched.ret5y}% · MaxDD: ${h.matched.maxDD}%
+              </div>`:'<div style="font-size:11px;color:var(--text3);">Not found in database</div>'}
+            </div>
+            <div>${h.matched?`<span class="beat-tag ${h.matched.benchBeat?'beat-yes':'beat-no'}">${h.matched.benchBeat?'▲ Beats':'▼ Lags'}</span>`:'—'}</div>
+          </div>`).join('')}
+        ${needUpgrade?`
+        <div style="background:rgba(56,189,248,.06);border:1px solid rgba(56,189,248,.18);border-radius:8px;padding:12px;margin-top:10px;">
+          <div style="font-size:10.5px;font-weight:700;color:var(--sky);margin-bottom:9px;font-family:'JetBrains Mono',monospace;letter-spacing:.06em;">UPGRADE OPPORTUNITIES IN ${cat.toUpperCase()}</div>
+          ${bestDB.map(a=>`
+            <div class="flex items-center justify-between" style="padding:8px 0;border-bottom:1px solid rgba(56,189,248,.08);font-size:12px;cursor:pointer;gap:8px;" onclick="openSlide('${a.id}')">
+              <div>
+                <span style="font-weight:600;color:var(--white);">${a.n}</span>
+                <span style="color:var(--text3);margin-left:8px;">👤 ${a.mgr}</span>
+              </div>
+              <div class="flex gap12" style="flex-shrink:0;">
+                <span>Sharpe <span class="g" style="font-weight:700;">${a.sharpe}</span></span>
+                <span>5Y <span class="g" style="font-weight:700;">${a.ret5y}%</span></span>
+                <span class="bdg bdg-g">Consider</span>
+              </div>
+            </div>`).join('')}
+        </div>`:`
+        <div style="background:rgba(52,211,153,.05);border:1px solid rgba(52,211,153,.15);border-radius:8px;padding:10px;margin-top:10px;font-size:12px;color:#34d399;">
+          ✓ Your ${cat} selection looks strong. No immediate upgrades necessary.
+        </div>`}
+      </div>`;
+    }).join('')}
+  </div>
+
+  <!-- Composition donut-style breakdown -->
+  <div class="card fadein">
+    <div class="card-t"><div class="dot" style="background:var(--amber)"></div>Portfolio Composition</div>
+    <div style="display:flex;flex-wrap:wrap;gap:10px;">
+      ${Object.entries(byCat).map(([cat,funds])=>{
+        const val=funds.reduce((s,h)=>s+h.cur,0);
+        const pct=(val/totCur*100).toFixed(1);
+        return `<div style="flex:1;min-width:130px;padding:12px;background:var(--ink3);border-radius:9px;border:1px solid var(--border);">
+          <div style="font-family:'JetBrains Mono',monospace;font-size:9px;letter-spacing:.1em;text-transform:uppercase;color:var(--text3);margin-bottom:4px;">${cat}</div>
+          <div style="font-family:'DM Serif Display',serif;font-size:22px;color:var(--white);">${pct}%</div>
+          <div style="font-size:11px;color:var(--text3);">₹${fmtRs(val)}</div>
+          <div class="score-bar-bg"><div class="score-bar-fill" style="width:${Math.min(100,parseFloat(pct))}%"></div></div>
+        </div>`;
+      }).join('')}
+    </div>
+  </div>`;
+
+  document.getElementById('port-results').innerHTML = html;
+  document.getElementById('port-results').style.display = 'block';
+}
+
+/* ════════════════════════════════════════════════
+   COMPARE
+════════════════════════════════════════════════ */
+function addToCmp(id){
+  const empty=cmpSlots.findIndex(s=>!s);
+  if(empty>=0) cmpSlots[empty]=id; else cmpSlots[0]=id;
+}
+function renderCompare(){
+  const opts=`<option value="">— Choose fund —</option>`+DB.map(f=>`<option value="${f.id}">${f.n}</option>`).join('');
+  const cols=['var(--teal)','var(--sky)','var(--amber)'];
+  document.getElementById('cmp-pickers').innerHTML=[0,1,2].map(i=>`
+    <div class="card">
+      <div class="card-t"><div class="dot" style="background:${cols[i]}"></div>Fund ${i+1}</div>
+      <select style="width:100%;padding:9px 12px;" onchange="cmpSlots[${i}]=this.value;renderCmpTable()">
+        ${opts.replace(`value="${cmpSlots[i]||''}"`,`value="${cmpSlots[i]||''}" selected`)}
+      </select>
+    </div>`).join('');
+  renderCmpTable();
+}
+function renderCmpTable(){
+  const funds=cmpSlots.map(id=>id?DB.find(f=>f.id===id):null);
+  const af=funds.filter(Boolean);
+  if(!af.length){
+    document.getElementById('cmp-table').innerHTML=`<div style="text-align:center;padding:64px;color:var(--text3);">Select funds above to compare side by side</div>`;
+    return;
+  }
+  const cols=['var(--teal)','var(--sky)','var(--amber)'];
+  const rows=[
+    {l:'Category',k:'cat'},
+    {l:'AMC',k:'amc'},
+    {l:'Fund Manager',k:'mgr'},
+    {l:'Manager Exp (yrs)',k:'mexp',hb:true},
+    {l:'Fund Tenure (yrs)',k:'mten',hb:true},
+    {l:'AUM',k:'aum',fmt:v=>'₹'+fmtAUMShort(v)+'Cr',hb:true},
+    {l:'── RETURNS ──'},
+    {l:'1Y Return',k:'ret1y',suf:'%',hb:true},
+    {l:'3Y CAGR',k:'ret3y',suf:'%',hb:true},
+    {l:'5Y CAGR',k:'ret5y',suf:'%',hb:true},
+    {l:'10Y CAGR',k:'ret10y',suf:'%',hb:true},
+    {l:'Rolling 3Y',k:'r3y',suf:'%',hb:true},
+    {l:'Rolling 5Y',k:'r5y',suf:'%',hb:true},
+    {l:'── RISK RATIOS ──'},
+    {l:'Sharpe Ratio',k:'sharpe',hb:true},
+    {l:'Sortino Ratio',k:'sortino',hb:true},
+    {l:'Alpha',k:'alpha',suf:'%',hb:true},
+    {l:'Beta',k:'beta',hb:false},
+    {l:'Std Deviation',k:'stddev',suf:'%',hb:false},
+    {l:'Information Ratio',k:'infoRatio',hb:true},
+    {l:'Treynor Ratio',k:'treynor',hb:true},
+    {l:'Max Drawdown',k:'maxDD',suf:'%',hb:false},
+    {l:'Calmar Ratio',k:'calmar',hb:true},
+    {l:'── COSTS & META ──'},
+    {l:'Expense Ratio',k:'exp',suf:'%',hb:false},
+    {l:'Min SIP',k:'minSip',fmt:v=>'₹'+v,hb:false},
+    {l:'Star Rating',k:'rating',fmt:v=>starsHtml(v),hb:true},
+    {l:'Beats Benchmark',k:'benchBeat',fmt:v=>v?'<span class="bdg bdg-g">✓ Yes</span>':'<span class="bdg bdg-r">✗ No</span>'},
+  ];
+  document.getElementById('cmp-table').innerHTML=`
+  <div style="overflow-x:auto;">
+  <table class="tbl">
+    <thead><tr>
+      <th style="min-width:160px;">Metric</th>
+      ${af.map((f,i)=>`<th style="min-width:190px;"><div style="color:${cols[i]};font-family:'DM Serif Display',serif;font-size:14px;font-weight:400;">${f.n.split(' ').slice(0,4).join(' ')}</div><div style="font-size:9.5px;color:var(--text3);margin-top:2px;">${f.amc}</div></th>`).join('')}
+    </tr></thead>
+    <tbody>
+    ${rows.map(row=>{
+      if(row.l.startsWith('──')) return `<tr><td colspan="${af.length+1}" style="padding:7px 13px;font-size:9.5px;color:var(--text3);letter-spacing:.12em;text-transform:uppercase;background:rgba(0,0,0,.2);">${row.l.replace(/──\s*/g,'').replace(/\s*──/g,'')}</td></tr>`;
+      const vals=af.map(f=>f[row.k]);
+      const nums=vals.filter(v=>typeof v==='number');
+      const best=row.hb!==undefined&&nums.length>1?(row.hb?Math.max(...nums):Math.min(...nums)):null;
+      const worst=row.hb!==undefined&&nums.length>1?(row.hb?Math.min(...nums):Math.max(...nums)):null;
+      return `<tr style="border-bottom:1px solid rgba(30,45,61,.4);">
+        <td style="color:var(--text3);font-size:11px;">${row.l}</td>
+        ${af.map((f,i)=>{
+          const v=f[row.k];
+          const disp=row.fmt?row.fmt(v):(typeof v==='number'?v+(row.suf||''):(v??'—'));
+          const isBest=best!==null&&v===best&&best!==worst;
+          const isWorst=worst!==null&&v===worst&&best!==worst;
+          return `<td class="${isBest?'cmp-best':isWorst?'cmp-worst':'cmp-neutral'}">${disp}</td>`;
+        }).join('')}
+      </tr>`;
+    }).join('')}
+    </tbody>
+  </table>
+  </div>`;
+}
+
+/* ════════════════════════════════════════════════
+   RANKINGS
+════════════════════════════════════════════════ */
+function compositeScore(f){
+  return (f.sharpe/3*30 + f.ret5y/45*25 + Math.max(0,f.alpha)/20*20 + f.sortino/3.5*15 + f.infoRatio/1.5*10).toFixed(1);
+}
+function setRankBy(m,el){
+  rankBy=m;
+  document.querySelectorAll('#tp-rankings .chip').forEach(c=>c.classList.remove('on'));
+  el.classList.add('on');
+  renderRankings();
+}
+function renderRankings(){
+  const cats=['Large Cap','Flexi Cap','Mid Cap','Small Cap','ELSS','Hybrid','Index','Debt','Sectoral'];
+  const metaLabel={composite:'Score',sharpe:'Sharpe',ret5y:'5Y Ret',alpha:'Alpha',sortino:'Sortino',infoRatio:'Info Ratio'};
+  document.getElementById('rankGrid').innerHTML=cats.map(cat=>{
+    const funds=DB.filter(f=>f.cat===cat).sort((a,b)=>{
+      if(rankBy==='composite') return parseFloat(compositeScore(b))-parseFloat(compositeScore(a));
+      return b[rankBy]-a[rankBy];
+    }).slice(0,5);
+    if(!funds.length) return '';
+    return `
+    <div class="rank-card">
+      <div class="rank-card-head">
+        <div class="rank-card-title">${cat}</div>
+        <span class="bdg ${CATCLS[cat]||''}">${funds.length}</span>
+      </div>
+      ${funds.map((f,i)=>{
+        const v=rankBy==='composite'?compositeScore(f):f[rankBy];
+        const suf=rankBy.includes('ret')||rankBy==='alpha'?'%':'';
+        const barW=Math.min(100,parseFloat(v)/(rankBy==='composite'?60:rankBy.includes('ret')?50:rankBy==='alpha'?20:3)*100);
+        return `
+        <div class="rank-row" onclick="openSlide('${f.id}')">
+          <div class="rk ${i===0?'rk1':i===1?'rk2':i===2?'rk3':'rk-n'}">${i+1}</div>
+          <div style="flex:1;min-width:0;">
+            <div class="rr-name">${f.n}</div>
+            <div class="rr-mgr">👤 ${f.mgr} · ${f.mexp}y · ${starsHtml(f.rating)}</div>
+            <div class="score-bar-bg"><div class="score-bar-fill" style="width:${barW}%;opacity:.6;"></div></div>
+          </div>
+          <div class="rr-val">
+            <div class="rr-num" style="color:${i===0?'#34d399':i<3?'var(--amber)':'var(--text2)'}">${v}${suf}</div>
+            <div class="rr-lbl">${metaLabel[rankBy]}</div>
+          </div>
+        </div>`;
+      }).join('')}
+    </div>`;
+  }).join('');
+}
+
+/* ════════════════════════════════════════════════
+   GLOSSARY
+════════════════════════════════════════════════ */
+function renderGlossary(){
+  document.getElementById('glossaryGrid').innerHTML=GLOSSARY.map(g=>`
+    <div class="card">
+      <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;margin-bottom:10px;">
+        <div>
+          <div style="font-family:'DM Serif Display',serif;font-size:18px;color:var(--white);">${g.term}</div>
+          <div style="font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--teal);margin-top:3px;">${g.formula}</div>
+        </div>
+      </div>
+      <div style="font-size:12.5px;color:var(--text2);line-height:1.65;margin-bottom:12px;">${g.what}</div>
+      <div style="display:flex;gap:8px;margin-bottom:10px;flex-wrap:wrap;">
+        <span class="bdg bdg-g">🟢 Good: ${g.good}</span>
+        <span class="bdg bdg-y">🟡 OK: ${g.ok}</span>
+        <span class="bdg bdg-r">🔴 Weak: ${g.bad}</span>
+      </div>
+      <div style="padding:9px 11px;background:var(--ink3);border-radius:7px;font-size:11.5px;color:var(--text3);line-height:1.6;border-left:2px solid var(--teal);">💡 ${g.note}</div>
+    </div>`).join('');
+}
+
+/* ════════════════════════════════════════════════
+   INIT
+════════════════════════════════════════════════ */
+buildExplorerKPI();
+buildCatChips();
+drawTable();
+</script>
+</body>
+</html>
