@@ -1171,7 +1171,9 @@ function setFileTab(tab, el) {
 /* ════════════════════════════════════════════════
    PDF PASSWORD MODAL
 ════════════════════════════════════════════════ */
-let _pendingPdfBytes = null;
+// Store as Uint8Array — safe to reuse (ArrayBuffer gets neutered after first pdf.js use)
+let _pendingPdfData = null;   // Uint8Array — never neutered
+let _pendingFileName = '';
 
 function onPDFFile(e) {
   const file = e.target.files[0];
@@ -1184,59 +1186,82 @@ function handlePdfFile(file) {
     showPdfStatus('error', '⚠ Please upload a PDF file.');
     return;
   }
+  if (file.size > 30 * 1024 * 1024) {
+    showPdfStatus('error', '⚠ File too large (max 30 MB).');
+    return;
+  }
+  _pendingFileName = file.name;
   showPdfStatus('info', '📄 Reading file…');
+  hidePdfProgress();
+
   const reader = new FileReader();
-  reader.onload = e => {
-    _pendingPdfBytes = e.target.result;
-    // First try without password (unlocked copy)
-    attemptPdfLoad('');
+  reader.onload = function(ev) {
+    // Store as Uint8Array so it can be sliced fresh for every pdf.js call
+    _pendingPdfData = new Uint8Array(ev.target.result);
+    // First: try without password (handles unlocked copies)
+    loadPdfWithPassword('');
+  };
+  reader.onerror = function() {
+    showPdfStatus('error', '⚠ Could not read file. Please try again.');
   };
   reader.readAsArrayBuffer(file);
 }
 
-function attemptPdfLoad(password) {
-  if (!_pendingPdfBytes) return;
+/* Always creates a fresh copy of the buffer for pdf.js */
+function freshBuffer() {
+  return _pendingPdfData.slice().buffer;   // slice() = copy; .buffer = ArrayBuffer
+}
+
+function loadPdfWithPassword(password) {
+  if (!_pendingPdfData) { showPdfStatus('error', '⚠ No PDF loaded.'); return; }
   if (typeof pdfjsLib === 'undefined') {
-    showPdfStatus('error', '⚠ PDF library not loaded. Check internet connection and refresh.');
+    showPdfStatus('error', '⚠ PDF library failed to load. Check your internet connection and refresh the page.');
     return;
   }
-  showPdfProgress(true, 'Opening PDF…', 10);
+
+  showPdfProgress(true, 'Opening PDF…', 8);
   hidePdfStatus();
 
-  const task = pdfjsLib.getDocument({
-    data: _pendingPdfBytes,
-    password: password,
-    verbosity: 0
-  });
+  const loadArgs = { data: freshBuffer(), verbosity: 0 };
+  if (password) loadArgs.password = password;
 
-  task.onPassword = (_cb, _reason) => {
+  const task = pdfjsLib.getDocument(loadArgs);
+
+  // pdf.js fires onPassword when it needs a password
+  task.onPassword = function(updateCallback, reason) {
     hidePdfProgress();
-    openPwdModal();
+    // reason: 1 = needs password, 2 = wrong password
+    openPwdModal(reason === 2 ? '❌ Wrong password — try again' : '');
   };
 
-  task.promise.then(pdf => {
+  task.promise.then(function(pdf) {
     closePwdModal();
+    showPdfProgress(true, 'PDF opened — extracting ' + pdf.numPages + ' pages…', 15);
     extractAndParse(pdf);
-  }).catch(err => {
+  }).catch(function(err) {
     hidePdfProgress();
-    if (err.name === 'PasswordException' || err.message?.includes('password')) {
-      openPwdModal();
+    const msg = err.message || String(err);
+    if (err.name === 'PasswordException' || msg.toLowerCase().includes('password')) {
+      openPwdModal('');
     } else {
-      showPdfStatus('error', '⚠ Could not open PDF: ' + (err.message || err));
+      showPdfStatus('error', '⚠ Could not open PDF: ' + msg +
+        '<br><span style="font-size:11px;opacity:.7">Try saving an unlocked copy via Print → Save as PDF, then re-upload.</span>');
     }
   });
 }
 
-function openPwdModal() {
-  document.getElementById('pdfPwdModal').style.display = 'flex';
-  document.getElementById('pdfPwdHint').innerHTML = '';
+function openPwdModal(errorMsg) {
+  const modal = document.getElementById('pdfPwdModal');
+  modal.style.display = 'flex';
+  document.getElementById('pdfPwdHint').innerHTML = errorMsg
+    ? '<span style="color:var(--rose)">' + errorMsg + '</span>' : '';
   const inp = document.getElementById('pdfPwdInput');
-  inp.value = '';
   inp.type = 'password';
-  setTimeout(() => inp.focus(), 80);
+  if (!errorMsg) inp.value = '';   // clear only on fresh open, not on retry
   const btn = document.getElementById('pdfPwdBtn');
   btn.textContent = '🔓 Unlock & Parse PDF';
   btn.disabled = false;
+  setTimeout(() => inp.focus(), 80);
 }
 
 function closePwdModal() {
@@ -1252,37 +1277,49 @@ function submitPdfPwd() {
   const pwd = document.getElementById('pdfPwdInput').value.trim().toUpperCase();
   if (!pwd) {
     document.getElementById('pdfPwdHint').innerHTML =
-      '<span style="color:var(--rose)">Please enter your PAN number as the password</span>';
+      '<span style="color:var(--rose)">Please enter your PAN number (e.g. ABCDE1234F)</span>';
     return;
   }
   const btn = document.getElementById('pdfPwdBtn');
-  btn.textContent = '⏳ Unlocking…';
+  btn.textContent = '⏳ Verifying…';
   btn.disabled = true;
   document.getElementById('pdfPwdHint').innerHTML =
-    '<span style="color:var(--text2)">Trying password…</span>';
+    '<span style="color:var(--text2);">Checking password…</span>';
 
-  // Re-attempt load with supplied password
   if (typeof pdfjsLib === 'undefined') {
-    showPdfStatus('error', '⚠ PDF library not loaded.'); return;
-  }
-  const task = pdfjsLib.getDocument({
-    data: _pendingPdfBytes,
-    password: pwd,
-    verbosity: 0
-  });
-  task.promise.then(pdf => {
-    closePwdModal();
-    showPdfProgress(true, 'Unlocked! Extracting pages…', 15);
-    extractAndParse(pdf);
-  }).catch(err => {
+    document.getElementById('pdfPwdHint').innerHTML =
+      '<span style="color:var(--rose)">⚠ PDF library not loaded.</span>';
     btn.textContent = '🔓 Unlock & Parse PDF';
     btn.disabled = false;
-    if (err.name === 'PasswordException' || err.message?.includes('password')) {
+    return;
+  }
+
+  // Always pass a fresh buffer — this is the key fix
+  const task = pdfjsLib.getDocument({ data: freshBuffer(), password: pwd, verbosity: 0 });
+
+  task.onPassword = function(_cb, reason) {
+    // Wrong password — pdf.js fires onPassword again
+    btn.textContent = '🔓 Unlock & Parse PDF';
+    btn.disabled = false;
+    document.getElementById('pdfPwdHint').innerHTML =
+      '<span style="color:var(--rose)">❌ Wrong password. CAMS password = PAN in uppercase, e.g. <code>ABCDE1234F</code></span>';
+  };
+
+  task.promise.then(function(pdf) {
+    // Correct password — close modal and proceed
+    closePwdModal();
+    showPdfProgress(true, 'Unlocked! Extracting ' + pdf.numPages + ' pages…', 15);
+    extractAndParse(pdf);
+  }).catch(function(err) {
+    btn.textContent = '🔓 Unlock & Parse PDF';
+    btn.disabled = false;
+    const msg = err.message || String(err);
+    if (err.name === 'PasswordException' || msg.toLowerCase().includes('password')) {
       document.getElementById('pdfPwdHint').innerHTML =
-        '<span style="color:var(--rose)">❌ Wrong password. Try your PAN in UPPERCASE — e.g. <code>ABCDE1234F</code></span>';
+        '<span style="color:var(--rose)">❌ Wrong password. CAMS password = PAN in uppercase, e.g. <code>ABCDE1234F</code></span>';
     } else {
       document.getElementById('pdfPwdHint').innerHTML =
-        '<span style="color:var(--rose)">⚠ ' + (err.message || err) + '</span>';
+        '<span style="color:var(--rose)">⚠ Error: ' + msg + '</span>';
     }
   });
 }
