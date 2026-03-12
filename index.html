@@ -1413,115 +1413,101 @@ function groupIntoLines(items) {
 }
 
 /* ════════════════════════════════════════════════
-   CAMS PARSER v3  —  handles BOTH formats:
-   
-   FORMAT A: Portfolio Valuation Statement
-   Columns: Folio | ISIN | SchemeName | CostValue |
-            UnitBalance | NAVDate | NAV | MarketValue | Registrar
-   → ISIN is 2nd column, all data on ONE line per fund
-   
-   FORMAT B: Consolidated Account Summary (CAS)
-   Columns: Folio | MarketValue | SchemeName | UnitBalance |
-            NAVDate | NAV | Registrar | ISIN | CostValue
-   → Each fund spans TWO lines:
-     Line 1: Folio + SchemeName + MarketValue
-     Line 2: ISIN + CostValue + UnitBalance + NAVDate + NAV + Registrar
+   CAMS PARSER v4  —  built from real PDF analysis
 
-   Bug fixes vs v2:
-   A – dedup on folio+isin (not just isin) → same ISIN in 2 folios kept
-   B – look ABOVE ISIN anchor for MarketValue (CAS puts it on folio line)
-   C – strip scheme-code prefixes (e.g. "128EFDGG - ")
-   D – folio regex accepts no-slash folios (e.g. 10719863)
-   E – detect format type from header to guide number assignment
+   Structure of actual CAMS CAS PDF (confirmed by
+   extracting text from the real uploaded PDF):
+
+   Header row:
+   "Folio No. ISIN Scheme Name Cost Value Unit Balance
+    NAV Date NAV Market Value Registrar"
+
+   Each fund entry = 1 anchor line + 0-3 continuation lines:
+   
+   ANCHOR LINE (contains ISIN + all 5 numbers):
+   "FolioISIN SchemeCode - SchemeName(partial)
+    CostValue  UnitBalance  NAVDate  NAV  MarketValue  Registrar"
+   
+   CONTINUATION LINES (scheme name wrap, no numbers):
+   "...scheme name continued..."
+   "(Non-Demat)" etc.
+
+   Key rules:
+   1. ALL numbers are on the ISIN anchor line — never bleed into next lines
+   2. Folio + ISIN are often concatenated with no space
+   3. Column order: Cost | Units | NAV | MarketValue (last = MV)
+   4. Same ISIN can appear in multiple folios — dedup by folio+isin
+   5. Scheme name = text between ISIN and first number on anchor line
+      + continuation lines until next ISIN anchor
 ════════════════════════════════════════════════ */
 function parseCAMSPortfolioValuation(lines) {
-  const RE_ISIN      = /\b(INF[A-Z0-9]{9,10}|INF\d[A-Z0-9]{8})\b/;
-  const RE_FOLIO     = /\b(\d{5,}(?:\/\d+)?)\b/;          // with or without /xx suffix
-  const RE_NAV_DATE  = /\b(\d{1,2}[-\/][A-Za-z]{3}[-\/]\d{4})\b/;
+  const RE_ISIN      = /INF(?=[A-Z0-9]{0,8}\d)[A-Z0-9]{9}/;  // no \b — handles concatenated FolioISIN
+  const RE_FOLIO     = /\b(\d{5,}(?:\/\d+)?)\b/;
+  const RE_NAV_DATE  = /\b(\d{1,2}-[A-Za-z]{3}-\d{4})\b/;
   const RE_REGISTRAR = /\b(CAMS|KARVY|KFINTECH|KFin)\b/i;
 
-  // ── Detect format from header row ──
-  const format = detectStatementFormat(lines);
-  console.log('[FundScope] Detected format:', format);
-
-  // ── Locate all ISIN anchor lines ──
+  // ── Pass 1: find all anchor line indices (lines containing an ISIN) ──
   const anchorIdxs = [];
   lines.forEach((line, idx) => {
     if (isTableHeader(line) || isBoilerplate(line)) return;
     if (RE_ISIN.test(line)) anchorIdxs.push(idx);
   });
 
-  // Fallback: anchor on folio lines if no ISINs found
-  if (!anchorIdxs.length) {
-    lines.forEach((line, idx) => {
-      if (isTableHeader(line) || isBoilerplate(line)) return;
-      if (RE_FOLIO.test(line)) anchorIdxs.push(idx);
-    });
-  }
+  if (!anchorIdxs.length) return [];
 
-  const holdings  = [];
-  const seenKey   = new Set();   // FIX A: key = folio+isin, not just isin
+  const holdings = [];
+  const seenKey  = new Set();   // dedup by folio+isin
 
-  anchorIdxs.forEach((isinIdx, ai) => {
-    const isinLine = lines[isinIdx];
-    const isinM    = isinLine.match(RE_ISIN);
-    const isin     = isinM ? isinM[1] : '';
+  anchorIdxs.forEach((anchorIdx, ai) => {
+    const anchorLine = lines[anchorIdx];
 
-    // Collect forward block (lines from isin down to next anchor, max 4)
-    const nextAnchor = anchorIdxs[ai + 1] ?? (isinIdx + 4);
-    const fwdEnd     = Math.min(isinIdx + 4, nextAnchor);
-    const fwdLines   = [];
-    for (let j = isinIdx; j < fwdEnd && j < lines.length; j++) {
-      const l = lines[j].trim();
-      if (l && !isTableHeader(l) && !isBoilerplate(l)) fwdLines.push(l);
-    }
+    // ── Extract ISIN and Folio from anchor line ──
+    const isinM = anchorLine.match(RE_ISIN);
+    const isin  = isinM ? isinM[0] : '';
 
-    // FIX B: collect backward lines (up to 3) before ISIN to find MV / scheme name
-    const bwdLines = [];
-    for (let j = isinIdx - 1; j >= Math.max(0, isinIdx - 3); j--) {
-      const l = lines[j].trim();
-      if (!l || isTableHeader(l) || isBoilerplate(l)) break;
-      // Stop if we hit the previous ISIN anchor
-      if (ai > 0 && j <= anchorIdxs[ai - 1]) break;
-      bwdLines.unshift(l);   // prepend so order is top→bottom
-    }
+    // Folio may be glued to ISIN: "910103379142/0INF846K01DP8"
+    // Split them apart to isolate the folio number
+    const splitLine = isin ? anchorLine.replace(isin, ' ' + isin + ' ') : anchorLine;
+    const folioM    = splitLine.match(RE_FOLIO);
+    const folio     = folioM ? folioM[1] : '';
 
-    const allLines = [...bwdLines, ...fwdLines];
-    const block    = allLines.join(' ');
-
-    // ── Extract fields ──
-    const folioM   = block.match(RE_FOLIO);
-    const folio    = folioM ? folioM[1] : '';
-    const navDateM = block.match(RE_NAV_DATE);
-    const navDate  = navDateM ? navDateM[1] : '';
-    const regM     = block.match(RE_REGISTRAR);
-    const registrar= regM ? regM[1].toUpperCase() : '';
-
-    // Dedup key = folio+isin (FIX A)
-    const dedupKey = (folio || '') + '|' + (isin || block.slice(0, 40));
+    // Dedup: same fund in same folio only once
+    const dedupKey  = folio + '|' + isin;
     if (seenKey.has(dedupKey)) return;
     seenKey.add(dedupKey);
 
-    // ── Scheme name ──
-    // For CAS: name is on the backward lines (folio+scheme line), not the ISIN line
-    // Use only bwdLines for name to prevent next fund bleeding in
-    const nameSource = bwdLines.length ? bwdLines.join(' ') : block;
-    const schemeName = extractSchemeNameV2(nameSource, folio, isin, navDate, registrar);
-    if (!schemeName || schemeName.length < 4) return;
+    // ── Extract ALL numbers from anchor line ONLY ──
+    // Do NOT include continuation lines — they have no numbers
+    const anchorNums = extractAllNumbers(anchorLine);
+    if (anchorNums.length < 2) return;
 
-    // ── Numbers: split into bwd-block and fwd-block numbers ──
-    const bwdNums = extractAllNumbers(bwdLines.join(' '));
-    const fwdNums = extractAllNumbers(fwdLines.join(' '));
-    const allNums = extractAllNumbers(block);
-    if (allNums.length < 2) return;
+    // ── Extract other fields from anchor line ──
+    const navDateM  = anchorLine.match(RE_NAV_DATE);
+    const navDate   = navDateM ? navDateM[1] : '';
+    const regM      = anchorLine.match(RE_REGISTRAR);
+    const registrar = regM ? regM[1].toUpperCase() : '';
 
-    // ── Assign numbers based on format ──
-    const { costVal, units, nav, marketVal } =
-      format === 'CAS'
-        ? assignNumbersCAS(bwdNums, fwdNums, allNums)
-        : assignNumbersPV(allNums);
+    // ── Assign numbers: Cost | Units | NAV | MarketValue ──
+    // Market value is ALWAYS the last number on the anchor line
+    const { costVal, units, nav, marketVal } = assignNumbers(anchorNums);
+    if (marketVal < 1) return;
 
-    if (marketVal < 10) return;
+    // ── Collect scheme name: anchor line fragment + continuation lines ──
+    // Anchor line: strip folio, ISIN, numbers, date, registrar → remaining = name start
+    // Continuation lines (until next anchor): pure text, append to name
+    const nextAnchor = anchorIdxs[ai + 1] ?? lines.length;
+    const contLines  = [];
+    for (let j = anchorIdx + 1; j < Math.min(anchorIdx + 5, nextAnchor, lines.length); j++) {
+      const l = lines[j].trim();
+      if (!l || isTableHeader(l) || isBoilerplate(l)) break;
+      // Stop if this line starts another record (shouldn't happen but safety)
+      if (RE_ISIN.test(l)) break;
+      // Only include if it looks like a name fragment (no numbers)
+      if (extractAllNumbers(l).length === 0) contLines.push(l);
+    }
+
+    const schemeName = extractSchemeName(anchorLine, folio, isin, navDate, registrar, contLines);
+    if (!schemeName || schemeName.length < 3) return;
 
     holdings.push(buildHolding(
       schemeName, folio, isin, costVal, units, nav, navDate, marketVal, registrar
@@ -1531,40 +1517,29 @@ function parseCAMSPortfolioValuation(lines) {
   return holdings;
 }
 
-/* ── Detect statement format from header ── */
-function detectStatementFormat(lines) {
-  for (let i = 0; i < Math.min(lines.length, 30); i++) {
-    const l = lines[i].toLowerCase();
-    if (l.includes('consolidated account summary') || l.includes('cas')) return 'CAS';
-    if (l.includes('portfolio valuation'))  return 'PV';
-    // CAS header has market value BEFORE scheme name
-    if (l.includes('market value') && l.includes('scheme name') && l.indexOf('market') < l.indexOf('scheme')) return 'CAS';
-  }
-  return 'PV';   // default
-}
-
-/* ── FIX 4: detect repeated table header rows ── */
+/* ── Detect repeated table header rows ── */
 function isTableHeader(line) {
   const l = line.toLowerCase();
-  const hits = ['folio','isin','scheme','cost','unit','nav','market','registrar']
-               .filter(k => l.includes(k)).length;
-  return hits >= 4;
+  // Must have column header keywords AND no ISIN data (no INF followed by digits)
+  const kwHits = ['folio','isin','scheme','cost','unit','nav','market','registrar']
+                 .filter(k => l.includes(k)).length;
+  const hasISINData = /INF[A-Z0-9]{9}/.test(line);
+  return kwHits >= 4 && !hasISINData;
 }
 
-/* ── Boilerplate: page headers, footers, totals, load info ── */
+/* ── Skip boilerplate: page headers/footers, loads section ── */
 function isBoilerplate(line) {
-  return /page\s+\d+\s+of\s+\d+|generated\s+on|confidential|disclaimer|total\s+(market|value|portfolio)|cams\s+online|portfolio\s+valuation\s+statement|consolidated\s+account\s+summary|investor\s+name|pan\s*:|mobile\s*:|email\s*:|loads?\s+and\s+fees|entry\s+load|exit\s+load|w\.e\.f|if\s+redeemed|date\s+of\s+allotment/i
-         .test(line);
+  return /page\s+\d+\s+of\s+\d+|generated\s+on|total\s+\d|consolidated\s+account\s+summary|as\s+on\s+\d|loads?\s+and\s+fees|entry\s+load|exit\s+load|w\.e\.f|if\s+redeemed|date\s+of\s+allotment|email\s+id\s*:|mobile\s*:|^\s*\(INR\)\s*$/i
+         .test(line.trim());
 }
 
 /* ════════════════════════════════════════════════
-   NUMBER EXTRACTION
+   EXTRACT NUMBERS — Indian comma-format decimals
 ════════════════════════════════════════════════ */
 function extractAllNumbers(text) {
   if (!text) return [];
   const nums = [];
-  // Match Indian-format decimals: 1,42,000.00 or 102.43 or 3,615.799
-  const re = /(?<![.\d,])([\d]{1,3}(?:,[\d]{2,3})*\.[\d]{2,4})(?![\d])/g;
+  const re   = /(?<![.\d,])([\d]{1,3}(?:,[\d]{2,3})*\.[\d]{2,4})(?![\d])/g;
   let m;
   while ((m = re.exec(text)) !== null) {
     const n = parseFloat(m[1].replace(/,/g, ''));
@@ -1574,116 +1549,85 @@ function extractAllNumbers(text) {
 }
 
 /* ════════════════════════════════════════════════
-   ASSIGN NUMBERS — CAS FORMAT
-   
-   Backward block (folio line):  [MarketValue]
-   Forward block (ISIN line):    [CostValue, UnitBalance, NAV]
-   
-   CAS column order on ISIN line: CostValue | UnitBalance | NAVDate | NAV | Registrar
+   ASSIGN NUMBERS TO COLUMNS
+   Order (confirmed from real PDF): 
+   CostValue | UnitBalance | NAV | MarketValue
+   Market value is ALWAYS the LAST number
 ════════════════════════════════════════════════ */
-function assignNumbersCAS(bwdNums, fwdNums, allNums) {
-  // Market Value: the LARGEST number in the backward block (folio/scheme line)
-  // It's typically the only large number on that line
-  let marketVal = 0;
-  if (bwdNums.length > 0) {
-    // MV is the largest number on the backward line(s)
-    marketVal = Math.max(...bwdNums);
-  }
+function assignNumbers(nums) {
+  if (!nums.length) return { costVal:0, units:0, nav:0, marketVal:0 };
 
-  // Forward block (ISIN line): CostValue, UnitBalance, NAV
+  // Market value = last number (rightmost column in PDF)
+  const marketVal = nums[nums.length - 1];
+
   let costVal = 0, units = 0, nav = 0;
-  if (fwdNums.length >= 3) {
-    costVal = fwdNums[0];
-    units   = fwdNums[1];
-    nav     = fwdNums[fwdNums.length - 1];  // NAV is last on ISIN line
-  } else if (fwdNums.length === 2) {
-    costVal = fwdNums[0];
-    units   = fwdNums[1];
-  } else if (fwdNums.length === 1) {
-    costVal = fwdNums[0];
+  if (nums.length >= 4) {
+    costVal = nums[0];
+    units   = nums[1];
+    nav     = nums[2];
+  } else if (nums.length === 3) {
+    costVal = nums[0];
+    units   = nums[1];
+    // nav missing — marketVal is nums[2], already set above
+  } else if (nums.length === 2) {
+    costVal = nums[0];
+    // marketVal = nums[1], already set
+  } else {
+    // Only 1 number = market value
+    costVal = marketVal * 0.82;
   }
 
-  // Sanity: if marketVal not found in bwd, fall back to largest overall
-  if (marketVal < 10 && allNums.length) {
-    marketVal = Math.max(...allNums.filter(n => n >= 100));
-  }
-  // Sanity: cost should not exceed market value dramatically
-  if (costVal > marketVal * 5 && marketVal > 0) {
+  // Safety: cost should not dwarf market value
+  if (costVal > marketVal * 10 && marketVal > 0) {
     [costVal, marketVal] = [marketVal, costVal];
   }
-  // Units sanity: units should not be larger than cost value usually
-  if (units > costVal * 100 && costVal > 0) {
-    [units, costVal] = [costVal, units];
-  }
 
   return { costVal, units, nav, marketVal };
 }
 
 /* ════════════════════════════════════════════════
-   ASSIGN NUMBERS — Portfolio Valuation FORMAT
-   
-   All on one line: CostValue | UnitBalance | NAV | MarketValue
+   EXTRACT SCHEME NAME
+   From anchor line: strip folio, ISIN, scheme-code
+   prefix, numbers, date, registrar
+   Then append continuation lines
 ════════════════════════════════════════════════ */
-function assignNumbersPV(nums) {
-  if (!nums.length) return { costVal:0, units:0, nav:0, marketVal:0 };
-  let costVal=0, units=0, nav=0, marketVal=0;
+function extractSchemeName(anchorLine, folio, isin, navDate, registrar, contLines) {
+  let s = anchorLine;
 
-  if (nums.length >= 4) {
-    costVal   = nums[0];
-    units     = nums[1];
-    nav       = nums[2];
-    marketVal = nums[nums.length - 1];
-    if (units > 50000 && nav < 10000) [costVal, units] = [units, costVal];
-    if (nav > 10000 && units < 10000) [units, nav]     = [nav, units];
-  } else if (nums.length === 3) {
-    costVal=nums[0]; units=nums[1]; marketVal=nums[2];
-  } else if (nums.length === 2) {
-    if (nums[0] >= 100) { costVal=nums[0]; marketVal=nums[1]; }
-    else                { units=nums[0];   marketVal=nums[1]; }
-  } else {
-    marketVal=nums[0]; costVal=marketVal*0.82;
-  }
-
-  // Market value = largest monetary figure
-  const big = nums.filter(n => n >= 100);
-  if (big.length && marketVal < Math.max(...big) * 0.5) marketVal = Math.max(...big);
-  if (costVal > marketVal * 3 && marketVal > 0) [costVal, marketVal] = [marketVal, costVal];
-
-  return { costVal, units, nav, marketVal };
-}
-
-/* ════════════════════════════════════════════════
-   EXTRACT SCHEME NAME  v3
-   FIX C: strip AMC scheme-code prefixes (e.g. "128EFDGG - ")
-   FIX D: folio regex handles no-slash folios
-════════════════════════════════════════════════ */
-function extractSchemeNameV2(block, folio, isin, navDate, registrar) {
-  let s = block;
-
-  // FIX C: strip scheme code prefix — pattern: WORD+digits followed by " - "
-  // e.g. "128EFDGG - ", "101EQDGG - ", "PP001ZG - ", "RMFSCAGG - "
-  s = s.replace(/\b[A-Z0-9]{4,10}\s*-\s*/g, ' ');
-
-  // Remove known tokens
-  if (isin)       s = s.replace(new RegExp(isin, 'g'), ' ');
-  if (folio)      s = s.replace(new RegExp(folio.replace(/[.*+?^${}()|[\]\\]/g,'\\$&'), 'g'), ' ');
-  if (navDate)    s = s.replace(navDate, ' ');
-  if (registrar)  s = s.replace(new RegExp('\\b' + registrar + '\\b', 'gi'), ' ');
-
-  // Remove Indian-format numbers
+  // Remove NAV date FIRST (before number stripping to avoid "-Mar-" residue)
+  if (navDate) s = s.replace(navDate, ' ');
+  // Remove folio (may be glued to ISIN)
+  if (folio) s = s.replace(new RegExp(folio.replace(/[.*+?^${}()|[\]\\]/g,'\\$&'), 'g'), ' ');
+  // Remove ISIN
+  if (isin)  s = s.replace(isin, ' ');
+  // Remove scheme-code prefix: e.g. "128EFDGG - " or "PP001ZG - " or "RMFSCAGG - "
+  s = s.replace(/\b[A-Z0-9]{4,12}\s*-\s+/g, ' ');
+  // Remove numbers (Indian format)
   s = s.replace(/(?<![.\d])[\d]{1,3}(?:,[\d]{2,3})*\.[\d]{2,6}(?![\d])/g, ' ');
-  // Remove bare integers (years, folio parts)
+  // Remove bare integers
   s = s.replace(/\b\d+\b/g, ' ');
-  // Remove label words
-  s = s.replace(/\b(INR|Rs\.?|NA|NIL|ISIN|Folio|No\.?|Non-Demat|Demat|formerly|erstwhile|Formerly|Known|known|C\/O)\b/gi, ' ');
-  s = s.replace(/[|\\\/]/g, ' ');
-  // Collapse whitespace
-  s = s.replace(/\s+/g, ' ').trim();
-  // Trim leading/trailing hyphens
-  s = s.replace(/^[\s\-–()]+|[\s\-–()]+$/g, '').trim();
+  // Remove registrar
+  if (registrar) s = s.replace(new RegExp('\\b' + registrar + '\\b', 'gi'), ' ');
+  // Remove noise tokens
+  s = s.replace(/\b(INR|Rs\.?|NA|NIL|ISIN|Folio|No\.?)\b/gi, ' ');
+  s = s.replace(/[|\\]/g, ' ').replace(/\s+/g, ' ').trim();
+  s = s.replace(/^[\s\-–()\[\]]+|[\s\-–()\[\]]+$/g, '').trim();
 
-  if (s.length < 4 || !/[A-Za-z]{3}/.test(s)) return '';
-  return s;
+  // Append continuation lines (name wrap)
+  if (contLines.length) {
+    const cont = contLines
+      .join(' ')
+      .replace(/\b(Non-Demat|formerly|erstwhile|Formerly|known|Non-Demat)\b/gi, '')
+      .replace(/[()]/g, '')
+      .replace(/\s+/g, ' ')
+      .trim();
+    if (cont.length > 2) s = (s + ' ' + cont).replace(/\s+/g, ' ').trim();
+  }
+
+  // Final cleanup
+  s = s.replace(/^[\s\-–]+|[\s\-–]+$/g, '').trim();
+
+  return s.length >= 3 ? s : '';
 }
 
 /* ── Parse Indian number ── */
@@ -1697,7 +1641,7 @@ function buildHolding(name, folio, isin, costVal, units, nav, navDate, marketVal
   const gain    = marketVal - cost;
   const gainPct = cost > 0 ? (gain / cost * 100) : null;
   return {
-    name:      name.replace(/\s+/g,' ').trim(),
+    name:      name.replace(/\s+/g, ' ').trim(),
     folio, isin, units, nav, navDate, registrar,
     cur:       marketVal,
     cost,
