@@ -1149,8 +1149,9 @@ function closeSlide() {
 /* ════════════════════════════════════════════════
    PDF.js SETUP
 ════════════════════════════════════════════════ */
-if(typeof pdfjsLib !== 'undefined') {
-  pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+if (typeof pdfjsLib !== 'undefined') {
+  pdfjsLib.GlobalWorkerOptions.workerSrc =
+    'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
 }
 
 /* ════════════════════════════════════════════════
@@ -1170,77 +1171,72 @@ function setFileTab(tab, el) {
 /* ════════════════════════════════════════════════
    PDF PASSWORD MODAL
 ════════════════════════════════════════════════ */
-let pendingPdfData = null; // ArrayBuffer of uploaded PDF
+let _pendingPdfBytes = null;
 
 function onPDFFile(e) {
   const file = e.target.files[0];
-  if(file) handlePdfFile(file);
+  if (file) handlePdfFile(file);
   e.target.value = '';
 }
 
 function handlePdfFile(file) {
-  if(!file.name.toLowerCase().endsWith('.pdf')) {
+  if (!file.name.toLowerCase().endsWith('.pdf')) {
     showPdfStatus('error', '⚠ Please upload a PDF file.');
     return;
   }
-  if(file.size > 30 * 1024 * 1024) {
-    showPdfStatus('error', '⚠ File too large. Maximum 30MB supported.');
-    return;
-  }
-
+  showPdfStatus('info', '📄 Reading file…');
   const reader = new FileReader();
-  reader.onload = function(e) {
-    pendingPdfData = e.target.result;
-    // Try without password first (some statements aren't protected)
-    tryParsePDF(null);
+  reader.onload = e => {
+    _pendingPdfBytes = e.target.result;
+    // First try without password (unlocked copy)
+    attemptPdfLoad('');
   };
   reader.readAsArrayBuffer(file);
 }
 
-function tryParsePDF(password) {
-  if(!pendingPdfData) return;
-  if(typeof pdfjsLib === 'undefined') {
-    showPdfStatus('error', '⚠ PDF library not loaded. Check your internet connection and refresh.');
+function attemptPdfLoad(password) {
+  if (!_pendingPdfBytes) return;
+  if (typeof pdfjsLib === 'undefined') {
+    showPdfStatus('error', '⚠ PDF library not loaded. Check internet connection and refresh.');
     return;
   }
-
   showPdfProgress(true, 'Opening PDF…', 10);
+  hidePdfStatus();
 
-  const loadingTask = pdfjsLib.getDocument({
-    data: pendingPdfData,
-    password: password || '',
+  const task = pdfjsLib.getDocument({
+    data: _pendingPdfBytes,
+    password: password,
     verbosity: 0
   });
 
-  loadingTask.onPassword = function(updateCallback, reason) {
-    // PDF is password protected - show modal
+  task.onPassword = (_cb, _reason) => {
     hidePdfProgress();
-    showPasswordModal();
-    // Store callback for when user submits password
-    window._pdfPasswordCallback = updateCallback;
+    openPwdModal();
   };
 
-  loadingTask.promise.then(function(pdf) {
-    hidePdfProgress();
+  task.promise.then(pdf => {
     closePwdModal();
-    showPdfProgress(true, 'Extracting text from ' + pdf.numPages + ' pages…', 20);
-    extractAllText(pdf);
-  }).catch(function(err) {
+    extractAndParse(pdf);
+  }).catch(err => {
     hidePdfProgress();
-    if(err.name === 'PasswordException') {
-      showPasswordModal();
+    if (err.name === 'PasswordException' || err.message?.includes('password')) {
+      openPwdModal();
     } else {
-      showPdfStatus('error', '⚠ Could not read PDF: ' + (err.message || err));
+      showPdfStatus('error', '⚠ Could not open PDF: ' + (err.message || err));
     }
   });
 }
 
-function showPasswordModal() {
-  const modal = document.getElementById('pdfPwdModal');
-  modal.style.display = 'flex';
-  document.getElementById('pdfPwdHint').textContent = '';
-  document.getElementById('pdfPwdInput').value = '';
-  setTimeout(() => document.getElementById('pdfPwdInput').focus(), 100);
+function openPwdModal() {
+  document.getElementById('pdfPwdModal').style.display = 'flex';
+  document.getElementById('pdfPwdHint').innerHTML = '';
+  const inp = document.getElementById('pdfPwdInput');
+  inp.value = '';
+  inp.type = 'password';
+  setTimeout(() => inp.focus(), 80);
+  const btn = document.getElementById('pdfPwdBtn');
+  btn.textContent = '🔓 Unlock & Parse PDF';
+  btn.disabled = false;
 }
 
 function closePwdModal() {
@@ -1254,307 +1250,401 @@ function togglePwd() {
 
 function submitPdfPwd() {
   const pwd = document.getElementById('pdfPwdInput').value.trim().toUpperCase();
-  if(!pwd) {
-    document.getElementById('pdfPwdHint').innerHTML = '<span style="color:var(--rose)">Please enter your PAN number as password</span>';
+  if (!pwd) {
+    document.getElementById('pdfPwdHint').innerHTML =
+      '<span style="color:var(--rose)">Please enter your PAN number as the password</span>';
     return;
   }
-
   const btn = document.getElementById('pdfPwdBtn');
   btn.textContent = '⏳ Unlocking…';
   btn.disabled = true;
+  document.getElementById('pdfPwdHint').innerHTML =
+    '<span style="color:var(--text2)">Trying password…</span>';
 
-  // If pdf.js already asked for password via callback
-  if(window._pdfPasswordCallback) {
-    document.getElementById('pdfPwdHint').innerHTML = '<span style="color:var(--text2)">Trying password…</span>';
-    window._pdfPasswordCallback(pwd);
-    window._pdfPasswordCallback = null;
-
-    // Re-initiate load with password
-    closePwdModal();
-    showPdfProgress(true, 'Unlocking PDF…', 15);
-    const loadingTask = pdfjsLib.getDocument({
-      data: pendingPdfData,
-      password: pwd,
-      verbosity: 0
-    });
-    loadingTask.promise.then(function(pdf) {
-      hidePdfProgress();
-      showPdfProgress(true, 'Extracting text from ' + pdf.numPages + ' pages…', 20);
-      extractAllText(pdf);
-    }).catch(function(err) {
-      hidePdfProgress();
-      btn.textContent = '🔓 Unlock & Parse PDF';
-      btn.disabled = false;
-      if(err.name === 'PasswordException') {
-        showPasswordModal();
-        document.getElementById('pdfPwdHint').innerHTML = '<span style="color:var(--rose)">❌ Wrong password. Try your PAN in UPPERCASE (e.g. ABCDE1234F)</span>';
-      } else {
-        showPdfStatus('error', '⚠ ' + err.message);
-      }
-    });
-  } else {
-    // Direct attempt with password
-    closePwdModal();
-    showPdfProgress(true, 'Unlocking PDF…', 15);
-    const loadingTask = pdfjsLib.getDocument({
-      data: pendingPdfData,
-      password: pwd,
-      verbosity: 0
-    });
-    loadingTask.promise.then(function(pdf) {
-      hidePdfProgress();
-      showPdfProgress(true, 'Extracting text from ' + pdf.numPages + ' pages…', 20);
-      extractAllText(pdf);
-    }).catch(function(err) {
-      hidePdfProgress();
-      btn.textContent = '🔓 Unlock & Parse PDF';
-      btn.disabled = false;
-      if(err.name === 'PasswordException') {
-        showPasswordModal();
-        document.getElementById('pdfPwdHint').innerHTML = '<span style="color:var(--rose)">❌ Wrong password. Try your PAN in UPPERCASE (e.g. ABCDE1234F)</span>';
-      } else {
-        showPdfStatus('error', '⚠ ' + err.message);
-      }
-    });
+  // Re-attempt load with supplied password
+  if (typeof pdfjsLib === 'undefined') {
+    showPdfStatus('error', '⚠ PDF library not loaded.'); return;
   }
+  const task = pdfjsLib.getDocument({
+    data: _pendingPdfBytes,
+    password: pwd,
+    verbosity: 0
+  });
+  task.promise.then(pdf => {
+    closePwdModal();
+    showPdfProgress(true, 'Unlocked! Extracting pages…', 15);
+    extractAndParse(pdf);
+  }).catch(err => {
+    btn.textContent = '🔓 Unlock & Parse PDF';
+    btn.disabled = false;
+    if (err.name === 'PasswordException' || err.message?.includes('password')) {
+      document.getElementById('pdfPwdHint').innerHTML =
+        '<span style="color:var(--rose)">❌ Wrong password. Try your PAN in UPPERCASE — e.g. <code>ABCDE1234F</code></span>';
+    } else {
+      document.getElementById('pdfPwdHint').innerHTML =
+        '<span style="color:var(--rose)">⚠ ' + (err.message || err) + '</span>';
+    }
+  });
 }
 
 /* ════════════════════════════════════════════════
-   PDF TEXT EXTRACTION
+   EXTRACT ALL TEXT FROM PDF PAGES
 ════════════════════════════════════════════════ */
-async function extractAllText(pdf) {
-  const numPages = pdf.numPages;
-  let fullText = '';
-  const pageTexts = [];
+async function extractAndParse(pdf) {
+  const total = pdf.numPages;
+  let lines = [];   // each element = one visual line of text
 
-  for(let i = 1; i <= numPages; i++) {
-    const pct = 20 + Math.round((i / numPages) * 50);
-    showPdfProgress(true, `Extracting page ${i} of ${numPages}…`, pct);
+  for (let p = 1; p <= total; p++) {
+    const pct = 15 + Math.round((p / total) * 55);
+    showPdfProgress(true, `Reading page ${p} of ${total}…`, pct);
     try {
-      const page = await pdf.getPage(i);
-      const content = await page.getTextContent();
-      // Preserve layout by using y-position grouping
-      const items = content.items;
-      // Sort by y (descending = top to bottom), then x (left to right)
-      items.sort((a, b) => {
-        const yDiff = Math.round(b.transform[5] / 2) - Math.round(a.transform[5] / 2);
-        if(yDiff !== 0) return yDiff;
-        return a.transform[4] - b.transform[4];
-      });
-      let pageText = '';
-      let lastY = null;
-      items.forEach(item => {
-        const y = Math.round(item.transform[5] / 2);
-        if(lastY !== null && Math.abs(y - lastY) > 2) pageText += '\n';
-        pageText += item.str + ' ';
-        lastY = y;
-      });
-      pageTexts.push(pageText);
-      fullText += pageText + '\n---PAGE---\n';
-    } catch(e) { console.warn('Page', i, 'error:', e); }
+      const page    = await pdf.getPage(p);
+      const content = await page.getTextContent({ normalizeWhitespace: false });
+      const pageLines = contentToLines(content.items);
+      lines = lines.concat(pageLines);
+    } catch (e) { console.warn('Page', p, 'error:', e); }
   }
 
   showPdfProgress(true, 'Parsing fund data…', 75);
   setTimeout(() => {
-    const holdings = parseCAMSText(fullText, pageTexts);
+    const holdings = parseCAMSPortfolioValuation(lines);
     showPdfProgress(true, 'Building analysis…', 95);
     setTimeout(() => {
       hidePdfProgress();
-      if(holdings.length === 0) {
-        showPdfStatus('error', `⚠ No mutual fund data found in this PDF. This analyser supports CAMS Detailed Account Statements. Try the sample portfolio to see the expected format, or use the CSV/Excel tab.`);
+      if (!holdings.length) {
+        showPdfStatus('error',
+          '⚠ No fund data found. Make sure this is a CAMS Portfolio Valuation Statement ' +
+          'with columns: Folio No, ISIN, Scheme Name, Cost Value, Unit Balance, NAV Date, NAV, Market Value, Registrar. ' +
+          '<br>You can also try the <strong>CSV / Excel</strong> tab.');
       } else {
-        showPdfStatus('success', `✓ Successfully extracted ${holdings.length} fund holdings from PDF`);
+        showPdfStatus('success',
+          `✓ Extracted <strong>${holdings.length} fund holdings</strong> from PDF`);
         renderPortResults(holdings);
       }
-    }, 400);
-  }, 100);
+    }, 300);
+  }, 50);
 }
 
 /* ════════════════════════════════════════════════
-   CAMS PDF PARSER — handles multiple statement formats
+   PDF TEXT → VISUAL LINES
+   Groups text items into lines using Y-coordinate
 ════════════════════════════════════════════════ */
-function parseCAMSText(fullText, pageTexts) {
-  const holdings = [];
-  const seen = new Set();
+function contentToLines(items) {
+  if (!items.length) return [];
 
-  // ── STRATEGY 1: Parse Folio blocks (Detailed Statement format)
-  // Pattern: "Folio No: XXXXXXX" followed by scheme name and closing balance + market value
-  const folioBlocks = splitIntoFolioBlocks(fullText);
-  folioBlocks.forEach(block => {
-    const holding = extractFolioHolding(block);
-    if(holding && !seen.has(holding.name)) {
-      seen.add(holding.name);
-      holdings.push(holding);
-    }
+  // Group items by rounded Y position (same line = within 2pt)
+  const yMap = {};
+  items.forEach(item => {
+    const y = Math.round(item.transform[5]);
+    const x = item.transform[4];
+    if (!yMap[y]) yMap[y] = [];
+    yMap[y].push({ x, text: item.str });
   });
 
-  // ── STRATEGY 2: Look for market value summary lines
-  // Pattern: "Scheme Name ... Units ... Value"
-  if(holdings.length === 0) {
-    const summaryHoldings = parseSummaryFormat(fullText);
-    summaryHoldings.forEach(h => {
-      if(!seen.has(h.name)) { seen.add(h.name); holdings.push(h); }
-    });
+  // Sort Y descending (top of page first), within each Y sort X ascending
+  const ys = Object.keys(yMap).map(Number).sort((a, b) => b - a);
+  return ys.map(y => {
+    const sorted = yMap[y].sort((a, b) => a.x - b.x);
+    return sorted.map(i => i.text).join(' ').replace(/\s+/g, ' ').trim();
+  }).filter(l => l.length > 0);
+}
+
+/* ════════════════════════════════════════════════
+   CAMS PORTFOLIO VALUATION PARSER
+   
+   Format columns (from user's statement):
+   Folio No | ISIN | Scheme Name | Cost Value (INR) |
+   Unit Balance | NAV Date | NAV (INR) | Market Value (INR) | Registrar
+════════════════════════════════════════════════ */
+function parseCAMSPortfolioValuation(lines) {
+  const holdings = [];
+  const seen     = new Set();
+
+  // Regex patterns for each field
+  const RE_FOLIO    = /^(\d[\d\/]+)\s/;                         // starts with digits/digits
+  const RE_ISIN     = /\b(INF[A-Z0-9]{9})\b/;                   // INF + 9 chars
+  const RE_NAV_DATE = /\b(\d{1,2}[-\/]\w{3}[-\/]\d{4})\b/;     // DD-Mon-YYYY
+  const RE_NUMBER   = /([\d,]+\.\d{2,4})/g;                     // Indian-formatted number
+  const RE_REGISTRAR= /\b(CAMS|KARVY|KFINTECH|KFin)\b/i;
+
+  // Strategy 1 ─ try to find the header row first, then parse data rows
+  const headerIdx = findHeaderRow(lines);
+  if (headerIdx >= 0) {
+    parseTableRows(lines, headerIdx, holdings, seen,
+                   RE_FOLIO, RE_ISIN, RE_NAV_DATE, RE_NUMBER, RE_REGISTRAR);
   }
 
-  // ── STRATEGY 3: Fallback — scan all lines for fund-like entries
-  if(holdings.length === 0) {
-    const fallback = parseFallback(fullText);
-    fallback.forEach(h => {
-      if(!seen.has(h.name)) { seen.add(h.name); holdings.push(h); }
-    });
+  // Strategy 2 ─ if nothing found, scan every line for ISIN pattern (most reliable anchor)
+  if (!holdings.length) {
+    scanByISIN(lines, holdings, seen, RE_ISIN, RE_NUMBER, RE_NAV_DATE);
+  }
+
+  // Strategy 3 ─ scan every line for folio pattern as anchor
+  if (!holdings.length) {
+    scanByFolio(lines, holdings, seen, RE_FOLIO, RE_ISIN, RE_NUMBER, RE_NAV_DATE);
   }
 
   return holdings;
 }
 
-function splitIntoFolioBlocks(text) {
-  // Split text at each "Folio No:" occurrence
-  const parts = text.split(/Folio\s*No\s*[:.]?\s*/i);
-  return parts.slice(1); // skip pre-folio header
+/* ── Find the header row ── */
+function findHeaderRow(lines) {
+  for (let i = 0; i < lines.length; i++) {
+    const l = lines[i].toLowerCase();
+    // Header row contains several of these column keywords
+    const hits = ['folio','isin','scheme','cost','unit','nav','market','registrar']
+                  .filter(k => l.includes(k)).length;
+    if (hits >= 4) return i;
+  }
+  return -1;
 }
 
-function extractFolioHolding(block) {
-  // Extract folio number
-  const folioMatch = block.match(/^([A-Z0-9\/\-]+)/i);
-  const folio = folioMatch ? folioMatch[1].trim() : '';
+/* ── Strategy 1: parse rows after header ── */
+function parseTableRows(lines, headerIdx, holdings, seen,
+                        RE_FOLIO, RE_ISIN, RE_NUMBER, RE_NAV_DATE, RE_REGISTRAR) {
 
-  // Extract scheme name — usually the first long text line after folio
-  // CAMS format: scheme name appears after folio/registrar lines
-  // Look for known fund name patterns
-  const schemePatterns = [
-    /([A-Z][A-Za-z\s\-]+(?:Fund|Scheme|Growth|Plan|Direct|Regular|Dividend)[A-Za-z\s\-]*(?:Growth|Plan|Direct|Regular|Option)?)/,
-    /Scheme\s*[:\-]?\s*([^\n]{10,80})/i,
-  ];
-  let schemeName = '';
-  for(const pat of schemePatterns) {
-    const m = block.match(pat);
-    if(m) { schemeName = m[1].trim().replace(/\s+/g,' '); break; }
+  // Detect column order from header
+  const hdr = lines[headerIdx].toLowerCase();
+  const colOrder = detectColumnOrder(hdr);
+
+  for (let i = headerIdx + 1; i < lines.length; i++) {
+    const line = lines[i].trim();
+    if (!line || isPageFooter(line) || isPageHeader(line)) continue;
+
+    // Each data row must have an ISIN or folio
+    const isinMatch  = line.match(RE_ISIN);
+    const folioMatch = line.match(RE_FOLIO);
+    if (!isinMatch && !folioMatch) continue;
+
+    // Extract all numbers from this line (and next 1 line if needed)
+    const combined = line + ' ' + (lines[i+1] || '');
+    const nums = extractAllNumbers(combined);
+    if (nums.length < 2) continue;
+
+    const isin       = isinMatch ? isinMatch[1] : '';
+    const folio      = folioMatch ? folioMatch[1].trim() : '';
+    const navDateM   = combined.match(RE_NAV_DATE);
+    const navDate    = navDateM ? navDateM[1] : '';
+    const registrarM = combined.match(RE_REGISTRAR);
+    const registrar  = registrarM ? registrarM[1].toUpperCase() : '';
+
+    // Scheme name = text between ISIN and first big number
+    // OR between folio and ISIN
+    const schemeName = extractSchemeName(line, folio, isin, navDate, registrar);
+    if (!schemeName || schemeName.length < 8) continue;
+
+    // Map numbers to columns: Cost Value | Unit Balance | NAV | Market Value
+    // Typical order in CAMS: cost, units, nav, marketValue
+    const { costVal, units, nav, marketVal } = assignNumbers(nums, colOrder);
+    if (marketVal < 100) continue;
+
+    const key = isin || schemeName;
+    if (seen.has(key)) continue;
+    seen.add(key);
+
+    holdings.push(buildHolding(schemeName, folio, isin, costVal, units, nav, navDate, marketVal, registrar));
+    // Skip next line if it was consumed
+    if (lines[i+1] && extractAllNumbers(lines[i+1]).length > 0 && !lines[i+1].match(RE_ISIN)) i++;
   }
-  if(!schemeName || schemeName.length < 10) return null;
-
-  // Extract closing units
-  let units = 0;
-  const unitPatterns = [
-    /Closing\s+Unit\s+Balance\s*[:\-]?\s*([\d,]+\.?\d*)/i,
-    /Balance\s+Units?\s*[:\-]?\s*([\d,]+\.?\d*)/i,
-    /Units?\s+Balance\s*[:\-]?\s*([\d,]+\.?\d*)/i,
-    /Closing\s+Balance\s*[:\-]?\s*([\d,]+\.?\d*)\s*(?:units?)?/i,
-  ];
-  for(const pat of unitPatterns) {
-    const m = block.match(pat);
-    if(m) { units = parseNum(m[1]); break; }
-  }
-
-  // Extract market value
-  let marketVal = 0;
-  const mvPatterns = [
-    /Market\s+Value\s+as\s+on\s+[^\:]+\s*[:\-]?\s*(?:Rs\.?|INR|₹)?\s*([\d,]+\.?\d*)/i,
-    /Current\s+Value\s*[:\-]?\s*(?:Rs\.?|INR|₹)?\s*([\d,]+\.?\d*)/i,
-    /Market\s+Value\s*[:\-]?\s*(?:Rs\.?|INR|₹)?\s*([\d,]+\.?\d*)/i,
-    /(?:Rs\.?|INR|₹)\s*([\d,]+\.?\d*)\s*(?:\*|$|\n)/,
-  ];
-  for(const pat of mvPatterns) {
-    const m = block.match(pat);
-    if(m) { marketVal = parseNum(m[1]); break; }
-  }
-
-  // Extract invested / cost value
-  let costVal = 0;
-  const costPatterns = [
-    /(?:Cost|Purchase|Invested|Investment)\s+Value\s*[:\-]?\s*(?:Rs\.?|INR|₹)?\s*([\d,]+\.?\d*)/i,
-    /Total\s+(?:Cost|Purchase|Amount)\s*[:\-]?\s*(?:Rs\.?|INR|₹)?\s*([\d,]+\.?\d*)/i,
-  ];
-  for(const pat of costPatterns) {
-    const m = block.match(pat);
-    if(m) { costVal = parseNum(m[1]); break; }
-  }
-
-  // Extract NAV
-  let nav = 0;
-  const navMatch = block.match(/NAV\s+as\s+on\s+[^\:]+\s*[:\-]?\s*(?:Rs\.?|INR|₹)?\s*([\d,]+\.?\d*)/i)
-    || block.match(/Last\s+NAV\s*[:\-]?\s*([\d,]+\.?\d*)/i);
-  if(navMatch) nav = parseNum(navMatch[1]);
-
-  // If no market value but have units and nav, compute it
-  if(marketVal === 0 && units > 0 && nav > 0) marketVal = units * nav;
-  if(marketVal === 0) return null; // skip if no value
-  if(costVal === 0) costVal = marketVal * 0.82; // estimate if missing
-
-  return {
-    name: schemeName,
-    folio: folio,
-    units: units,
-    nav: nav,
-    cur: marketVal,
-    cost: costVal,
-    gain: marketVal - costVal,
-    gainPct: costVal > 0 ? ((marketVal - costVal) / costVal * 100) : null,
-    matched: matchFund(schemeName),
-    source: 'pdf-folio'
-  };
 }
 
-function parseSummaryFormat(text) {
-  // Look for tabular summary: lines with scheme + Rs. values
-  const holdings = [];
-  const lines = text.split('\n');
-  for(let i = 0; i < lines.length; i++) {
-    const line = lines[i];
-    // Line contains a mutual fund-sounding name and has Rs./value nearby
-    if(!/fund|scheme|plan/i.test(line)) continue;
-    if(line.length < 15 || line.length > 200) continue;
+/* ── Strategy 2: anchor on ISIN ── */
+function scanByISIN(lines, holdings, seen, RE_ISIN, RE_NUMBER, RE_NAV_DATE) {
+  for (let i = 0; i < lines.length; i++) {
+    const isinM = lines[i].match(RE_ISIN);
+    if (!isinM) continue;
+    const isin = isinM[1];
+    if (seen.has(isin)) continue;
 
-    // Look for value in same or next 3 lines
-    let valueStr = '';
-    const window = lines.slice(i, i+4).join(' ');
-    const valMatch = window.match(/(?:Rs\.?|INR|₹)\s*([\d,]+\.?\d*)/);
-    if(!valMatch) continue;
+    // Grab this line + next 2 for full row data
+    const combined = lines.slice(i, i+3).join(' ');
+    const nums     = extractAllNumbers(combined);
+    const navDateM = combined.match(RE_NAV_DATE);
+    const navDate  = navDateM ? navDateM[1] : '';
 
-    const name = line.trim().replace(/\s+/g,' ');
-    const val = parseNum(valMatch[1]);
-    if(val < 1000) continue; // Skip small/spurious values
+    // Scheme name: text before ISIN on same line, or line before
+    let schemeName = extractSchemeNameFromISINLine(lines[i], isin);
+    if (!schemeName && i > 0) schemeName = extractSchemeNameFromISINLine(lines[i-1], '');
 
-    holdings.push({
-      name, folio: '',
-      cur: val, cost: val * 0.82,
-      gain: val * 0.18, gainPct: 22,
-      matched: matchFund(name),
-      source: 'pdf-summary'
-    });
+    if (!schemeName || schemeName.length < 8) { schemeName = isin; }
+
+    const { costVal, units, nav, marketVal } = assignNumbers(nums, null);
+    if (marketVal < 100) continue;
+
+    seen.add(isin);
+    holdings.push(buildHolding(schemeName, '', isin, costVal, units, nav, navDate, marketVal, ''));
+    i += 2;
   }
-  return holdings;
 }
 
-function parseFallback(text) {
-  // Very broad fallback — find any line that looks like a fund name followed by a value
-  const holdings = [];
-  const fundNameRe = /([A-Z][A-Za-z\s]+(?:Fund|Scheme)\s+(?:Direct|Regular)?\s*(?:Plan)?\s*(?:Growth|Dividend|IDCW)?)/g;
-  const valueRe = /[\d,]{4,}\.?\d*/g;
+/* ── Strategy 3: anchor on Folio number ── */
+function scanByFolio(lines, holdings, seen, RE_FOLIO, RE_ISIN, RE_NUMBER, RE_NAV_DATE) {
+  for (let i = 0; i < lines.length; i++) {
+    const folioM = lines[i].match(RE_FOLIO);
+    if (!folioM) continue;
+    const folio = folioM[1];
+    if (seen.has(folio)) continue;
+
+    const combined = lines.slice(i, i+4).join(' ');
+    const nums     = extractAllNumbers(combined);
+    const isinM    = combined.match(RE_ISIN);
+    const isin     = isinM ? isinM[1] : '';
+    const navDateM = combined.match(RE_NAV_DATE);
+    const navDate  = navDateM ? navDateM[1] : '';
+
+    const schemeName = extractSchemeName(lines[i], folio, isin, navDate, '');
+    if (!schemeName || schemeName.length < 8) continue;
+
+    const { costVal, units, nav, marketVal } = assignNumbers(nums, null);
+    if (marketVal < 100) continue;
+
+    seen.add(folio);
+    holdings.push(buildHolding(schemeName, folio, isin, costVal, units, nav, navDate, marketVal, ''));
+    i += 3;
+  }
+}
+
+/* ── Detect column order from header text ── */
+function detectColumnOrder(headerLower) {
+  // Returns index positions of Cost, Units, NAV, MarketValue in column order
+  const cols = ['cost', 'unit', 'nav', 'market'];
+  const positions = cols.map(k => headerLower.indexOf(k));
+  return positions; // used to sort/assign numbers
+}
+
+/* ── Extract all valid numbers from a string ── */
+function extractAllNumbers(text) {
+  const raw = [];
+  const re  = /([\d,]+\.\d{2,6})/g;
   let m;
-  while((m = fundNameRe.exec(text)) !== null) {
-    const name = m[1].trim().replace(/\s+/g,' ');
-    if(name.length < 12) continue;
-    // Find next value
-    valueRe.lastIndex = m.index;
-    const vm = valueRe.exec(text.slice(m.index, m.index + 300));
-    if(!vm) continue;
-    const val = parseNum(vm[0]);
-    if(val < 1000 || val > 1000000000) continue;
-    holdings.push({
-      name, folio: '',
-      cur: val, cost: val * 0.82,
-      gain: val * 0.18, gainPct: 22,
-      matched: matchFund(name),
-      source: 'pdf-fallback'
-    });
+  while ((m = re.exec(text)) !== null) {
+    const n = parseIndianNumber(m[1]);
+    if (n > 0) raw.push(n);
   }
-  return holdings.slice(0, 30); // limit fallback results
+  return raw;
 }
 
-function parseNum(s) {
-  if(!s) return 0;
-  return parseFloat(s.toString().replace(/,/g,'')) || 0;
+/* ── Assign numbers to Cost/Units/NAV/MarketValue columns ── */
+function assignNumbers(nums, colOrder) {
+  // CAMS Portfolio Valuation column order:
+  // Cost Value(INR) | Unit Balance | NAV (INR) | Market Value (INR)
+  // 
+  // Heuristics:
+  // - Unit Balance: typically 1–99999 with up to 4 decimal places (not always a round number)
+  // - NAV: typically 10–5000
+  // - Cost Value & Market Value: typically > 1000, often similar magnitude
+  // - Market Value is usually the LAST monetary figure per row
+
+  if (!nums.length) return { costVal: 0, units: 0, nav: 0, marketVal: 0 };
+
+  // Filter: separate "unit-like" numbers (< 100000 and fractional) from "value" numbers
+  const monetary = nums.filter(n => n >= 100);
+  const unitLike = nums.filter(n => n > 0 && n < 100000);
+
+  let units = 0, nav = 0, costVal = 0, marketVal = 0;
+
+  if (nums.length >= 4) {
+    // Standard 4-column case: cost | units | nav | market
+    // Sort by column appearance (left to right = ascending index in text)
+    // We rely on order: first two large nums = cost & market, middle = units & nav
+    // Cost Value, Unit Balance, NAV, Market Value
+    costVal   = nums[0];
+    units     = nums[1];
+    nav       = nums[2];
+    marketVal = nums[3];
+
+    // Sanity: if "units" looks too large to be units (>500000), swap
+    if (units > 500000 && nav < 500000) {
+      [costVal, units] = [units, costVal];
+    }
+    // Sanity: market value should be ≥ cost value in most cases (gains)
+    // If first > last, last might actually be cost
+    if (marketVal < costVal / 2 && nums.length > 4) {
+      marketVal = nums[nums.length - 1];
+    }
+  } else if (nums.length === 3) {
+    // cost | units_or_nav | market   OR  units | nav | market
+    costVal   = nums[0];
+    units     = nums[1];
+    marketVal = nums[2];
+    nav       = 0;
+  } else if (nums.length === 2) {
+    costVal   = nums[0];
+    marketVal = nums[1];
+  } else if (nums.length === 1) {
+    marketVal = nums[0];
+    costVal   = marketVal * 0.82;
+  }
+
+  // Final sanity: ensure marketVal is the biggest monetary figure
+  if (costVal > marketVal * 2) [costVal, marketVal] = [marketVal, costVal];
+
+  return { costVal, units, nav, marketVal };
+}
+
+/* ── Extract scheme name from a line ── */
+function extractSchemeName(line, folio, isin, navDate, registrar) {
+  let s = line;
+  // Remove known non-name tokens
+  if (folio)     s = s.replace(folio, ' ');
+  if (isin)      s = s.replace(isin, ' ');
+  if (navDate)   s = s.replace(navDate, ' ');
+  if (registrar) s = s.replace(new RegExp(registrar, 'i'), ' ');
+  // Remove numbers (including Indian-formatted)
+  s = s.replace(/([\d,]+\.[\d]+)/g, ' ');
+  s = s.replace(/\b\d+\b/g, ' ');
+  // Remove common non-name tokens
+  s = s.replace(/\b(INR|Rs\.?|NA|NIL|ISIN|Folio)\b/gi, ' ');
+  s = s.replace(/[\/\|\\]/g, ' ');
+  // Clean and trim
+  s = s.replace(/\s+/g, ' ').trim();
+  // Must look like a fund name
+  if (s.length < 8) return '';
+  if (!/fund|scheme|plan|growth|direct|equity|debt|hybrid|elss|liquid|balanced|dynamic|flexi|mid|small|large|multi|value|nifty|sensex|index/i.test(s)) return '';
+  return s;
+}
+
+function extractSchemeNameFromISINLine(line, isin) {
+  let s = line;
+  if (isin) s = s.replace(isin, ' ');
+  s = s.replace(/([\d,]+\.[\d]+)/g, ' ').replace(/\b\d+\b/g, ' ').replace(/\s+/g, ' ').trim();
+  if (s.length < 8) return '';
+  if (/fund|scheme|plan|growth|direct|equity|debt|hybrid|liquid|flexi|mid|small|large|nifty|index/i.test(s)) return s;
+  return '';
+}
+
+/* ── Parse Indian number format (1,42,000.00) ── */
+function parseIndianNumber(s) {
+  return parseFloat((s || '').replace(/,/g, '')) || 0;
+}
+
+/* ── Skip footer / header lines ── */
+function isPageFooter(line) {
+  return /page\s+\d+\s+of\s+\d+|generated\s+on|confidential|cams\s+online|disclaimer|total\s+value/i.test(line);
+}
+function isPageHeader(line) {
+  return /portfolio\s+valuation|account\s+statement|investor\s+name|pan\s+no|mobile\s+no|email\s+id/i.test(line);
+}
+
+/* ── Build a holding object ── */
+function buildHolding(name, folio, isin, costVal, units, nav, navDate, marketVal, registrar) {
+  const gain    = marketVal - costVal;
+  const gainPct = costVal > 0 ? (gain / costVal * 100) : null;
+  return {
+    name:      name.replace(/\s+/g, ' ').trim(),
+    folio:     folio,
+    isin:      isin,
+    units:     units,
+    nav:       nav,
+    navDate:   navDate,
+    registrar: registrar,
+    cur:       marketVal,
+    cost:      costVal > 0 ? costVal : marketVal * 0.82,
+    gain:      gain,
+    gainPct:   gainPct !== null ? parseFloat(gainPct.toFixed(2)) : null,
+    matched:   matchFund(name),
+    source:    'cams-pdf'
+  };
 }
 
 /* ════════════════════════════════════════════════
@@ -1562,22 +1652,28 @@ function parseNum(s) {
 ════════════════════════════════════════════════ */
 function showPdfProgress(show, text, pct) {
   const el = document.getElementById('pdfProgress');
-  if(!el) return;
+  if (!el) return;
   el.style.display = show ? 'block' : 'none';
-  if(text) document.getElementById('pdfProgressText').textContent = text;
-  if(pct !== undefined) document.getElementById('pdfProgressBar').style.width = pct + '%';
+  if (text) document.getElementById('pdfProgressText').textContent = text;
+  if (pct !== undefined) document.getElementById('pdfProgressBar').style.width = pct + '%';
 }
 function hidePdfProgress() { showPdfProgress(false); }
 
 function showPdfStatus(type, msg) {
   const el = document.getElementById('pdfStatus');
-  if(!el) return;
-  const isErr = type === 'error';
-  el.style.display = 'block';
-  el.style.background = isErr ? 'rgba(251,113,133,.08)' : 'rgba(0,229,195,.08)';
-  el.style.border = '1px solid ' + (isErr ? 'rgba(251,113,133,.2)' : 'rgba(0,229,195,.2)');
-  el.style.color = isErr ? 'var(--rose)' : 'var(--teal)';
+  if (!el) return;
+  const colors = {
+    error:   ['rgba(251,113,133,.08)', 'rgba(251,113,133,.25)', 'var(--rose)'],
+    success: ['rgba(0,229,195,.08)',   'rgba(0,229,195,.25)',   'var(--teal)'],
+    info:    ['rgba(56,189,248,.08)',  'rgba(56,189,248,.25)',  'var(--sky)'],
+  };
+  const [bg, border, color] = colors[type] || colors.info;
+  el.style.cssText = `display:block;background:${bg};border:1px solid ${border};color:${color};border-radius:9px;padding:10px 14px;font-size:12.5px;margin-top:12px;`;
   el.innerHTML = msg;
+}
+function hidePdfStatus() {
+  const el = document.getElementById('pdfStatus');
+  if (el) el.style.display = 'none';
 }
 
 /* ════════════════════════════════════════════════
@@ -1597,7 +1693,6 @@ function dzDropCSV(e){
   e.preventDefault(); dzLeaveCSV();
   const f = e.dataTransfer.files[0]; if(f) processPortFile(f);
 }
-
 function onPortFile(e){
   const f=e.target.files[0]; if(f) processPortFile(f);
   e.target.value='';
