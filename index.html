@@ -922,26 +922,26 @@ function loadAMFIData() {
   fetchPageNavs(0);
 }
 
-/* ── Fetch NAVs for a page of funds via Anthropic API web_search ──
-   Calls mfapi.in server-side (bypasses CSP), returns JSON.          ── */
+/* ── Fetch NAVs sequentially — one at a time to avoid 429 ──
+   Fetches the first N visible funds one-by-one, re-rendering
+   the table after each so the user sees NAVs populate live.     ── */
 async function fetchPageNavs(page) {
-  const PAGE_SIZE = 20; // small batch to avoid rate limits
-  const slice = DB.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE);
-  const codes = slice.map(f => f.code).join(',');
+  const PAGE_SIZE = 10; // fetch NAVs for first 10 visible funds
+  const slice = DB.slice(0, PAGE_SIZE);
+  const pill  = document.getElementById('navDatePill');
 
-  try {
-    // Fetch NAVs for each fund individually (parallel, small requests)
-    await Promise.all(slice.map(f => fetchLiveNav(f)));
-    drawTable();
-    // Update pill with date from first fund that has one
-    const dated = DB.find(f => f.navDate);
-    const pill = document.getElementById('navDatePill');
-    if (dated && pill)
-      pill.innerHTML = `<div class="live-dot"></div>NAV: ${formatNavDate(dated.navDate)}`;
-  } catch(e) {
-    console.warn('[FundScope] fetchPageNavs error:', e.message);
+  for (const f of slice) {
+    const ok = await fetchLiveNav(f);
+    if (ok) {
+      drawTable(); // re-render after each so user sees it populate
+      if (f.navDate && pill)
+        pill.innerHTML = `<div class="live-dot"></div>NAV: ${formatNavDate(f.navDate)}`;
+    }
+    await sleep(400); // 400ms between calls — well within rate limits
   }
 }
+
+function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 
 /* ── Fetch live NAV for one fund via Anthropic API ── */
 async function fetchLiveNav(fund) {
