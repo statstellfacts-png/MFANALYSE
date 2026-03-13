@@ -651,138 +651,174 @@ function gTab(id) {
 ════════════════════════════════════════════════ */
 
 /* ════════════════════════════════════════════════
-   LIVE AMFI DATA LOADER
-   Source: https://www.amfiindia.com/spages/NAVAll.txt
-   Updated daily by AMFI. Free, CORS-enabled.
-   Format: SchemeCode;ISIN-Div;ISIN-Growth;SchemeName;NAV;Date
+   LIVE FUND DATA — mfapi.in (confirmed working)
+   
+   api.mfapi.in/mf          → all ~17k schemes, CORS ✅
+   api.mfapi.in/mf/{code}   → single fund NAV history
+   
+   Both return HTTP 200 from the browser directly.
+   No proxy needed.
 ════════════════════════════════════════════════ */
+
 async function loadAMFIData() {
   if (DB_LOADED) return;
   const pill = document.getElementById('navDatePill');
-  if (pill) pill.innerHTML = '<div class="live-dot"></div>NAV: Fetching…';
+  const tb   = document.getElementById('tbl-body');
+
+  const setPill = (txt, color) =>
+    pill && (pill.innerHTML = `<div class="live-dot"${color?` style="background:${color}"`:''
+    }></div>NAV: ${txt}`);
+
+  setPill('Loading…');
+  if (tb) tb.innerHTML = `<tr><td colspan="6" style="text-align:center;padding:64px;color:var(--text3);">
+    <div style="font-size:22px;margin-bottom:12px">⏳</div>
+    Fetching live fund list from mfapi.in…<br>
+    <small style="font-size:11px;margin-top:6px;display:block;opacity:.6">~17,000 schemes, filtering to Direct-Growth</small>
+  </td></tr>`;
 
   try {
-    // AMFI NAV file — updated daily, CORS-open
-    const res = await fetch('https://www.amfiindia.com/spages/NAVAll.txt');
-    if (!res.ok) throw new Error('AMFI fetch failed: ' + res.status);
-    const text = await res.text();
-    DB = parseAMFIText(text);
-    DB_LOADED = true;
+    // ── Step 1: fetch full scheme list ──────────────────────
+    const r1 = await fetch('https://api.mfapi.in/mf');
+    if (!r1.ok) throw new Error(`mfapi /mf returned HTTP ${r1.status}`);
+    const allSchemes = await r1.json();
 
-    // Update pill with date from first fund
-    if (DB.length) {
-      const sampleDate = DB.find(f => f.navDate)?.navDate || '';
-      if (pill) pill.innerHTML = `<div class="live-dot"></div>NAV: ${formatNavDate(sampleDate)}`;
-    }
+    if (!Array.isArray(allSchemes) || allSchemes.length < 100)
+      throw new Error(`Unexpected response: ${JSON.stringify(allSchemes).slice(0,100)}`);
+
+    // ── Step 2: filter Direct-Growth only ──────────────────
+    const directGrowth = allSchemes.filter(s => {
+      const nm = s.schemeName || '';
+      return /direct/i.test(nm)
+          && /growth/i.test(nm)
+          && !/dividend|idcw|weekly|monthly|quarterly|annual|bonus|sweep/i.test(nm);
+    });
+
+    // ── Step 3: build DB (nav=0 until refreshed on click) ──
+    DB = directGrowth.map((s, i) => ({
+      id:      'mf_' + s.schemeCode,
+      code:    String(s.schemeCode),
+      n:       s.schemeName,
+      amc:     extractAMC(s.schemeName),
+      cat:     normCatFromName(s.schemeName),
+      subCat:  '',
+      isin:    '',
+      nav:     0,
+      navDate: '',
+    })).sort((a, b) => a.n.localeCompare(b.n));
+
+    DB_LOADED = true;
+    setPill('Live · click fund for NAV');
     buildExplorerKPI();
     buildCatChips();
     drawTable();
-  } catch(err) {
-    console.error('AMFI load error:', err);
-    if (pill) pill.innerHTML = '<div class="live-dot" style="background:#f87171"></div>NAV: Offline';
-    // Show error in table
-    const tb = document.getElementById('tbl-body');
-    if (tb) tb.innerHTML = `<tr><td colspan="8" style="text-align:center;padding:48px;color:var(--rose);">
-      ⚠ Could not load live AMFI data. Please check your internet connection and refresh.<br>
-      <small style="color:var(--text3);margin-top:8px;display:block;">${err.message}</small>
+
+    // ── Step 4: fetch today's NAV for all schemes in bg ───
+    // mfapi.in/mf/latest returns latest NAV for every scheme
+    fetchAllNavs();
+
+  } catch (err) {
+    console.error('[FundScope]', err);
+    setPill('Error', '#f87171');
+    if (tb) tb.innerHTML = `<tr><td colspan="6" style="text-align:center;padding:52px;">
+      <div style="color:var(--rose);font-size:14px;font-weight:600;margin-bottom:8px;">⚠ Could not load fund list</div>
+      <div style="color:var(--text2);font-size:12px;margin-bottom:12px;">${err.message}</div>
+      <a href="javascript:void(0)" onclick="DB_LOADED=false;loadAMFIData()"
+         style="color:var(--teal);font-size:12px;padding:5px 14px;border:1px solid var(--teal);border-radius:6px;">
+        ↻ Retry</a>
     </td></tr>`;
   }
 }
 
-/* ── Parse AMFI NAVAll.txt ── */
-function parseAMFIText(text) {
-  const funds = [];
-  let currentAMC = '';
-  let currentCat = '';
-  let currentSubCat = '';
-  let id = 0;
+/* ── Fetch latest NAV for every fund via individual calls (batched) ──
+   mfapi.in has no bulk-NAV endpoint, so we call /mf/{code} for
+   a sample of ~50 visible funds first, then fill the rest lazily.    ── */
+async function fetchAllNavs() {
+  const pill = document.getElementById('navDatePill');
 
-  const lines = text.split('\n');
-  for (const rawLine of lines) {
-    const line = rawLine.trim();
-    if (!line) continue;
+  // Fetch NAVs for first 100 funds (what user sees initially)
+  const batch = DB.slice(0, 100);
+  let done = 0, latestDate = '';
 
-    // Category header: "Open Ended Schemes(Equity Scheme - Large Cap Fund)"
-    const catMatch = line.match(/^Open Ended Schemes\((.+?)\)\s*$/i)
-                  || line.match(/^Close Ended Schemes\((.+?)\)\s*$/i)
-                  || line.match(/^Interval Fund\((.+?)\)\s*$/i);
-    if (catMatch) {
-      const full = catMatch[1]; // e.g. "Equity Scheme - Large Cap Fund"
-      const parts = full.split(' - ');
-      currentCat    = normCat(parts[0] || full);
-      currentSubCat = parts[1] || '';
-      continue;
-    }
+  await Promise.all(batch.map(async f => {
+    try {
+      const r = await fetch(`https://api.mfapi.in/mf/${f.code}`);
+      if (!r.ok) return;
+      const d = await r.json();
+      if (d.data?.[0]) {
+        f.nav     = parseFloat(d.data[0].nav) || 0;
+        f.navDate = d.data[0].date || '';
+        if (!latestDate && f.navDate) latestDate = f.navDate;
+      }
+      if (d.meta) f.isin = d.meta.isin_growth || d.meta.isin_div_payout || '';
+    } catch(e) {}
+    done++;
+  }));
 
-    // AMC name line (no semicolons, not a header)
-    if (!line.includes(';') && line.length > 5 && !line.match(/^\d/)) {
-      currentAMC = line.trim();
-      continue;
-    }
-
-    // Data row: SchemeCode;ISIN-Div;ISIN-Growth;SchemeName;NAV;Date
-    const parts = line.split(';');
-    if (parts.length < 6) continue;
-
-    const [code, isinDiv, isinGrowth, name, navStr, dateStr] = parts;
-    if (!code || !/^\d+$/.test(code.trim())) continue;
-
-    const nav = parseFloat(navStr);
-    if (!nav || isNaN(nav) || nav <= 0) continue;
-
-    // Only include Direct Plans (filter by name)
-    const nm = name.trim();
-    const isDirectGrowth = /direct/i.test(nm) && /growth/i.test(nm);
-    const isDividend = /dividend|idcw|weekly|monthly|quarterly|annual/i.test(nm);
-    if (!isDirectGrowth || isDividend) continue;
-
-    funds.push({
-      id:       'amfi_' + (++id),
-      code:     code.trim(),
-      n:        nm,
-      amc:      currentAMC,
-      cat:      currentCat,
-      subCat:   currentSubCat,
-      isin:     (isinGrowth||isinDiv||'').trim(),
-      nav,
-      navDate:  dateStr.trim(),
-    });
-  }
-
-  // Sort by AMC then fund name
-  funds.sort((a,b) => a.n.localeCompare(b.n));
-  return funds;
+  if (latestDate && pill)
+    pill.innerHTML = `<div class="live-dot"></div>NAV: ${formatNavDate(latestDate)}`;
+  drawTable(); // re-render with live NAVs
 }
 
-/* ── Normalise AMFI category labels ── */
-function normCat(raw) {
-  const r = raw.toLowerCase();
-  if (r.includes('large cap'))    return 'Large Cap';
-  if (r.includes('mid cap'))      return 'Mid Cap';
-  if (r.includes('small cap'))    return 'Small Cap';
-  if (r.includes('flexi') || r.includes('multi cap') || r.includes('focused')) return 'Flexi/Multi Cap';
-  if (r.includes('elss') || r.includes('tax'))       return 'ELSS/Tax';
-  if (r.includes('hybrid') || r.includes('balanced') || r.includes('aggressive')) return 'Hybrid';
-  if (r.includes('index') || r.includes('etf'))      return 'Index/ETF';
-  if (r.includes('debt') || r.includes('liquid') || r.includes('overnight')
-      || r.includes('money market') || r.includes('gilt') || r.includes('credit')
-      || r.includes('duration') || r.includes('banking'))  return 'Debt';
-  if (r.includes('sector') || r.includes('thematic') || r.includes('international')
-      || r.includes('global') || r.includes('overseas'))   return 'Sectoral/Thematic';
-  if (r.includes('fund of funds') || r.includes('fof'))    return 'Fund of Funds';
-  return raw.trim() || 'Other';
+/* ── Fetch live NAV for one fund when its slide opens ── */
+async function fetchLiveNav(fund) {
+  try {
+    const r = await fetch(`https://api.mfapi.in/mf/${fund.code}`);
+    if (!r.ok) return false;
+    const d = await r.json();
+    if (d.data?.[0]) {
+      fund.nav     = parseFloat(d.data[0].nav) || fund.nav;
+      fund.navDate = d.data[0].date || fund.navDate;
+    }
+    if (d.meta) fund.isin = d.meta.isin_growth || d.meta.isin_div_payout || fund.isin;
+    return true;
+  } catch(e) { return false; }
 }
 
-/* ── Format NAV date for display ── */
+/* ── Extract AMC name from scheme name ── */
+function extractAMC(nm) {
+  const amcs = [
+    'Axis','Bajaj Finserv','Bandhan','Bank of India','Baroda BNP Paribas',
+    'Canara Robeco','DSP','Edelweiss','Franklin India','HDFC','HSBC',
+    'ICICI Prudential','IDBI','IDFC','ITI','Invesco India','JM Financial',
+    'Kotak','LIC','Mahindra Manulife','Mirae Asset','Motilal Oswal',
+    'Navi','NJ','Nippon India','Old Bridge','PGIM India','Parag Parikh',
+    'Quant','Quantum','SBI','Samco','Shriram','Sundaram','Tata','Taurus',
+    'Trust','UTI','Union','WhiteOak Capital','Zerodha','Aditya Birla'
+  ];
+  for (const a of amcs) if (nm.toLowerCase().startsWith(a.toLowerCase())) return a;
+  const m = nm.match(/^([\w ]+?)\s+(?:Fund|Scheme|Plan|\s-\s)/i);
+  return m ? m[1].trim() : nm.split(' ').slice(0, 2).join(' ');
+}
+
+/* ── Categorise from scheme name ── */
+function normCatFromName(name) {
+  const n = name.toLowerCase();
+  if (/\bindex\b.*fund|nifty\b|sensex\b|\betf\b/i.test(name))          return 'Index/ETF';
+  if (/small.?cap/i.test(n))                                            return 'Small Cap';
+  if (/mid.?cap/i.test(n))                                              return 'Mid Cap';
+  if (/large.?&.?mid|large.*mid/i.test(n))                              return 'Large & Mid Cap';
+  if (/large.?cap/i.test(n))                                            return 'Large Cap';
+  if (/multi.?cap|flexi.?cap|focused|value\s+fund/i.test(n))           return 'Flexi/Multi Cap';
+  if (/elss|tax.?saver|tax.?saving/i.test(n))                          return 'ELSS/Tax';
+  if (/hybrid|balanced.*adv|equity.?savings|arbitrage/i.test(n))       return 'Hybrid';
+  if (/fund.?of.?fund|fof|overseas|international|global|nasdaq|s&p/i.test(n)) return 'Fund of Funds';
+  if (/liquid|overnight|ultra.?short|money.?market/i.test(n))          return 'Debt – Liquid';
+  if (/gilt|gsec|g-sec/i.test(n))                                      return 'Debt – Gilt';
+  if (/debt|short.?dur|medium|long.?dur|credit|corporate.*bond|dynamic.*bond|banking.*psu/i.test(n)) return 'Debt';
+  if (/pharma|health|tech|banking.*fund|infra|consumption|manufactur|energy|auto|realty|psu|sector/i.test(n)) return 'Sectoral/Thematic';
+  return 'Other';
+}
+
+/* ── Format AMFI/mfapi date DD-Mon-YYYY ── */
 function formatNavDate(dateStr) {
-  // AMFI format: DD-MMM-YYYY e.g. "11-Mar-2026"
   if (!dateStr) return '—';
   const months = {Jan:0,Feb:1,Mar:2,Apr:3,May:4,Jun:5,Jul:6,Aug:7,Sep:8,Oct:9,Nov:10,Dec:11};
   const m = dateStr.match(/(\d{1,2})[-\/]([A-Za-z]{3})[-\/](\d{4})/);
   if (!m) return dateStr;
-  const d = new Date(+m[3], months[m[2]]||0, +m[1]);
-  return d.toLocaleDateString('en-IN', {day:'numeric',month:'short',year:'numeric'});
+  return new Date(+m[3], months[m[2]]||0, +m[1])
+    .toLocaleDateString('en-IN', {day:'numeric', month:'short', year:'numeric'});
 }
+
 
 function buildExplorerKPI() {
   if (!DB_LOADED || !DB.length) return;
@@ -920,15 +956,18 @@ function openSlide(id) {
 
   document.getElementById('sl-body').innerHTML = `
     <!-- NAV Card -->
-    <div class="card mb16">
+    <div class="card mb16" id="sl-nav-card">
       <div class="card-t"><div class="dot" style="background:var(--teal)"></div>Live NAV (AMFI)</div>
-      <div style="display:flex;align-items:baseline;gap:12px;margin-top:8px;">
-        <div style="font-size:36px;font-weight:800;color:var(--teal);font-family:'JetBrains Mono',monospace;">
-          ₹${f.nav.toLocaleString('en-IN', {minimumFractionDigits:2, maximumFractionDigits:4})}
-        </div>
-        <div style="font-size:12px;color:var(--text3);">as of ${formatNavDate(f.navDate)}</div>
-      </div>
-      <div style="margin-top:4px;font-size:11px;color:var(--text3);">Updated daily by AMFI • Source: amfiindia.com</div>
+      ${f.nav > 0
+        ? `<div style="display:flex;align-items:baseline;gap:12px;margin-top:8px;">
+             <div style="font-size:36px;font-weight:800;color:var(--teal);font-family:'JetBrains Mono',monospace;">
+               ₹${f.nav.toLocaleString('en-IN', {minimumFractionDigits:2, maximumFractionDigits:4})}
+             </div>
+             <div style="font-size:12px;color:var(--text3);">as of ${formatNavDate(f.navDate)}</div>
+           </div>
+           <div style="margin-top:4px;font-size:11px;color:var(--text3);">Updated daily by AMFI</div>`
+        : `<div id="nav-loading" style="margin-top:8px;color:var(--text3);font-size:13px;">⏳ Fetching NAV…</div>`
+      }
     </div>
 
     <!-- Fund Details -->
@@ -940,7 +979,7 @@ function openSlide(id) {
           ['Category', f.cat],
           ['Sub-category', f.subCat || '—'],
           ['Scheme Code', f.code],
-          ['ISIN (Growth)', f.isin || '—'],
+          ['ISIN (Growth)', `<span id="sl-isin">${f.isin || '—'}</span>`],
           ['NAV Date', formatNavDate(f.navDate)],
         ].map(([l,v]) => `
           <div style="padding:8px 10px;background:var(--ink3);border-radius:7px;">
@@ -982,6 +1021,30 @@ function openSlide(id) {
 
   document.getElementById('slide').classList.add('open');
   document.getElementById('bd').classList.add('show');
+
+  // Always try to refresh NAV live when slide opens
+  const navCard = document.getElementById('sl-nav-card');
+  if (navCard) {
+    const refresh = navCard.querySelector('.nav-refresh');
+    if (refresh) refresh.textContent = 'Refreshing…';
+  }
+  fetchLiveNav(f).then(ok => {
+    if (ok) {
+      const navEl = document.getElementById('sl-nav-card');
+      if (navEl) navEl.innerHTML = `
+        <div class="card-t"><div class="dot" style="background:var(--teal)"></div>Live NAV (AMFI)</div>
+        <div style="display:flex;align-items:baseline;gap:12px;margin-top:8px;">
+          <div style="font-size:36px;font-weight:800;color:var(--teal);font-family:'JetBrains Mono',monospace;">
+            ₹${f.nav.toLocaleString('en-IN',{minimumFractionDigits:2,maximumFractionDigits:4})}
+          </div>
+          <div style="font-size:12px;color:var(--text3);">as of ${formatNavDate(f.navDate)} <span style="color:var(--lime);margin-left:6px;">● live</span></div>
+        </div>
+        <div style="margin-top:4px;font-size:11px;color:var(--text3);">Fetched live from mfapi.in</div>`;
+      // Update ISIN row too
+      const isinEl = document.getElementById('sl-isin');
+      if (isinEl && f.isin) isinEl.textContent = f.isin;
+    }
+  }).catch(() => {});
 }
 
 
@@ -1929,6 +1992,8 @@ function renderGlossary(){
    INIT
 ════════════════════════════════════════════════ */
 loadAMFIData(); // load live AMFI data on startup
+
+
 </script>
 </body>
 </html>
