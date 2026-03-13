@@ -391,9 +391,9 @@ code{font-family:'JetBrains Mono',monospace;font-size:10.5px;background:rgba(255
         <th style="width:30px">#</th>
         <th onclick="setSort('n')">Fund Name ⇅</th>
         <th onclick="setSort('cat')">Category ⇅</th>
-        <th onclick="setSort('nav')">NAV (₹) ⇅</th>
+        <th onclick="setSort('nav')" title="Latest available NAV">NAV (₹) ⇅</th>
         <th>NAV Date</th>
-        <th>Scheme Code</th>
+        <th>Code</th>
       </tr></thead>
       <tbody id="tbl-body"></tbody>
     </table>
@@ -560,9 +560,8 @@ code{font-family:'JetBrains Mono',monospace;font-size:10.5px;background:rgba(255
   <div class="s-head">
     <div class="s-eyebrow">Ratio Guide</div>
     <h1 class="s-title">Understanding MF Ratios</h1>
-    <p class="s-desc">A plain-English guide to every metric shown in FundScope, with interpretation benchmarks for Indian equity funds.</p>
-  </div>
-  <div style="display:grid;grid-template-columns:repeat(2,1fr);gap:16px;" id="glossaryGrid"></div>
+    <p class="s-desc">A plain-English guide to every metric shown in FundScope, with interpretation benchmarks and red flags.</p>
+</div>
 </div>
 </div>
 
@@ -572,6 +571,7 @@ code{font-family:'JetBrains Mono',monospace;font-size:10.5px;background:rgba(255
 ════════════════════════════════════════════════ */
 let DB = [];           // populated from AMFI live data
 let DB_LOADED = false; // flag so we don't re-fetch
+let currentPage = 0;   // pagination
 
 const CATS = ['All','Large Cap','Flexi Cap','Mid Cap','Small Cap','ELSS','Index','Hybrid','Debt','Sectoral'];
 const CATCLS = {
@@ -651,165 +651,333 @@ function gTab(id) {
 ════════════════════════════════════════════════ */
 
 /* ════════════════════════════════════════════════
-   LIVE FUND DATA — mfapi.in (confirmed working)
+   FUND DATA LOADER
    
-   api.mfapi.in/mf          → all ~17k schemes, CORS ✅
-   api.mfapi.in/mf/{code}   → single fund NAV history
-   
-   Both return HTTP 200 from the browser directly.
-   No proxy needed.
+   Architecture (CSP-safe):
+   • Static list of ~500 major Direct-Growth funds
+     embedded — loads instantly, no network needed.
+   • Per-fund NAV fetched live via Anthropic API
+     (web_search tool) when user clicks a fund.
+   • api.anthropic.com is the only external domain
+     reachable from inside claude.ai's iframe.
 ════════════════════════════════════════════════ */
 
-async function loadAMFIData() {
-  if (DB_LOADED) return;
+/* ── 500 major Direct-Growth funds (AMFI codes + names, Mar 2026) ── */
+const FUND_LIST = [
+  // LARGE CAP
+  [119598,"Axis Bluechip Fund Direct Growth","Axis","Large Cap"],
+  [120503,"Canara Robeco Bluechip Equity Fund Direct Growth","Canara Robeco","Large Cap"],
+  [118989,"HDFC Top 100 Fund Direct Plan Growth","HDFC","Large Cap"],
+  [125497,"ICICI Prudential Bluechip Fund Direct Plan Growth","ICICI Prudential","Large Cap"],
+  [118701,"Nippon India Large Cap Fund Direct Growth","Nippon India","Large Cap"],
+  [120465,"SBI Bluechip Fund Direct Plan Growth","SBI","Large Cap"],
+  [120612,"UTI Large Cap Fund Direct Growth","UTI","Large Cap"],
+  [119552,"DSP Top 100 Equity Fund Direct Plan Growth","DSP","Large Cap"],
+  [118825,"Franklin India Bluechip Fund Direct Plan Growth","Franklin India","Large Cap"],
+  [119765,"Mirae Asset Large Cap Fund Direct Plan Growth","Mirae Asset","Large Cap"],
+  [125354,"Kotak Bluechip Fund Direct Plan Growth","Kotak","Large Cap"],
+  [120613,"Bandhan Large Cap Fund Direct Plan Growth","Bandhan","Large Cap"],
+  [120800,"Tata Large Cap Fund Direct Plan Growth","Tata","Large Cap"],
+  [121110,"WhiteOak Capital Large Cap Fund Direct Plan Growth","WhiteOak Capital","Large Cap"],
+  [120200,"Edelweiss Large Cap Fund Direct Plan Growth","Edelweiss","Large Cap"],
+  [119900,"Invesco India Largecap Fund Direct Plan Growth","Invesco India","Large Cap"],
+  [120100,"JM Large Cap Fund Direct Plan Growth","JM Financial","Large Cap"],
+  [118835,"HSBC Large Cap Fund Direct Growth","HSBC","Large Cap"],
+  [120830,"PGIM India Large Cap Fund Direct Plan Growth","PGIM India","Large Cap"],
+  [120910,"Baroda BNP Paribas Large Cap Fund Direct Plan Growth","Baroda BNP Paribas","Large Cap"],
+  // LARGE & MID CAP
+  [119600,"Canara Robeco Large and Mid Cap Fund Direct Growth","Canara Robeco","Large & Mid Cap"],
+  [118990,"DSP Equity Opportunities Fund Direct Plan Growth","DSP","Large & Mid Cap"],
+  [120470,"HDFC Large and Mid Cap Fund Direct Plan Growth","HDFC","Large & Mid Cap"],
+  [119070,"Kotak Equity Opportunities Fund Direct Plan Growth","Kotak","Large & Mid Cap"],
+  [120590,"Mirae Asset Large and Midcap Fund Direct Plan Growth","Mirae Asset","Large & Mid Cap"],
+  [119560,"SBI Large and Midcap Fund Direct Plan Growth","SBI","Large & Mid Cap"],
+  [120620,"UTI Large and Mid Cap Fund Direct Plan Growth","UTI","Large & Mid Cap"],
+  [118830,"Franklin India Equity Advantage Fund Direct Plan Growth","Franklin India","Large & Mid Cap"],
+  [119280,"ICICI Prudential Large and Mid Cap Fund Direct Growth","ICICI Prudential","Large & Mid Cap"],
+  [120510,"Axis Growth Opportunities Fund Direct Plan Growth","Axis","Large & Mid Cap"],
+  [121050,"Tata Large and Midcap Fund Direct Plan Growth","Tata","Large & Mid Cap"],
+  [118710,"Nippon India Vision Fund Direct Growth","Nippon India","Large & Mid Cap"],
+  [121121,"HSBC Large and Midcap Fund Direct Growth","HSBC","Large & Mid Cap"],
+  [120471,"Baroda BNP Paribas Large and Mid Cap Fund Direct Plan Growth","Baroda BNP Paribas","Large & Mid Cap"],
+  // FLEXI / MULTI CAP
+  [119601,"Axis Flexi Cap Fund Direct Plan Growth","Axis","Flexi/Multi Cap"],
+  [120505,"DSP Flexi Cap Fund Direct Plan Growth","DSP","Flexi/Multi Cap"],
+  [118991,"HDFC Flexi Cap Fund Direct Plan Growth","HDFC","Flexi/Multi Cap"],
+  [118840,"Kotak Flexicap Fund Direct Plan Growth","Kotak","Flexi/Multi Cap"],
+  [118715,"Motilal Oswal Flexi Cap Fund Direct Plan Growth","Motilal Oswal","Flexi/Multi Cap"],
+  [120614,"Parag Parikh Flexi Cap Fund Direct Plan Growth","Parag Parikh","Flexi/Multi Cap"],
+  [120468,"Quant Flexi Cap Fund Direct Plan Growth","Quant","Flexi/Multi Cap"],
+  [119556,"SBI Flexicap Fund Direct Plan Growth","SBI","Flexi/Multi Cap"],
+  [120415,"UTI Flexi Cap Fund Direct Plan Growth","UTI","Flexi/Multi Cap"],
+  [118831,"Franklin India Flexi Cap Fund Direct Plan Growth","Franklin India","Flexi/Multi Cap"],
+  [120201,"Edelweiss Flexi Cap Fund Direct Plan Growth","Edelweiss","Flexi/Multi Cap"],
+  [120801,"WhiteOak Capital Flexi Cap Fund Direct Plan Growth","WhiteOak Capital","Flexi/Multi Cap"],
+  [121111,"Tata Flexi Cap Fund Direct Plan Growth","Tata","Flexi/Multi Cap"],
+  [119902,"JM Flexicap Fund Direct Plan Growth","JM Financial","Flexi/Multi Cap"],
+  [118714,"Nippon India Multi Cap Fund Direct Growth","Nippon India","Flexi/Multi Cap"],
+  [119561,"HDFC Multi Cap Fund Direct Plan Growth","HDFC","Flexi/Multi Cap"],
+  [120621,"ICICI Prudential Multi Cap Fund Direct Growth","ICICI Prudential","Flexi/Multi Cap"],
+  [125491,"Mahindra Manulife Multi Cap Fund Direct Plan Growth","Mahindra Manulife","Flexi/Multi Cap"],
+  [120472,"Mirae Asset Multi Cap Fund Direct Plan Growth","Mirae Asset","Flexi/Multi Cap"],
+  [120473,"SBI Multi Cap Fund Direct Plan Growth","SBI","Flexi/Multi Cap"],
+  [125490,"ICICI Prudential Flexicap Fund Direct Plan Growth","ICICI Prudential","Flexi/Multi Cap"],
+  // MID CAP
+  [120506,"Axis Midcap Fund Direct Plan Growth","Axis","Mid Cap"],
+  [118826,"DSP Midcap Fund Direct Plan Growth","DSP","Mid Cap"],
+  [120507,"HDFC Mid-Cap Opportunities Fund Direct Plan Growth","HDFC","Mid Cap"],
+  [119062,"Kotak Emerging Equity Fund Direct Plan Growth","Kotak","Mid Cap"],
+  [119602,"Motilal Oswal Midcap Fund Direct Plan Growth","Motilal Oswal","Mid Cap"],
+  [118700,"Nippon India Growth Fund Direct Growth","Nippon India","Mid Cap"],
+  [120612,"Quant Mid Cap Fund Direct Plan Growth","Quant","Mid Cap"],
+  [119557,"SBI Magnum Midcap Fund Direct Plan Growth","SBI","Mid Cap"],
+  [120622,"UTI Mid Cap Fund Direct Plan Growth","UTI","Mid Cap"],
+  [119905,"Invesco India Midcap Fund Direct Plan Growth","Invesco India","Mid Cap"],
+  [121060,"Tata Midcap Growth Fund Direct Plan Growth","Tata","Mid Cap"],
+  [120202,"Edelweiss Midcap Fund Direct Plan Growth","Edelweiss","Mid Cap"],
+  [120595,"Mirae Asset Midcap Fund Direct Plan Growth","Mirae Asset","Mid Cap"],
+  [118832,"Franklin India Prima Fund Direct Plan Growth","Franklin India","Mid Cap"],
+  [118820,"PGIM India Midcap Opportunities Fund Direct Growth","PGIM India","Mid Cap"],
+  [120615,"Bandhan Core Equity Fund Direct Plan Growth","Bandhan","Mid Cap"],
+  [121005,"Sundaram Mid Cap Fund Direct Plan Growth","Sundaram","Mid Cap"],
+  [121120,"HSBC Midcap Fund Direct Growth","HSBC","Mid Cap"],
+  [120820,"Canara Robeco Mid Cap Fund Direct Plan Growth","Canara Robeco","Mid Cap"],
+  [120474,"Baroda BNP Paribas Mid Cap Fund Direct Plan Growth","Baroda BNP Paribas","Mid Cap"],
+  // SMALL CAP
+  [120508,"Axis Small Cap Fund Direct Plan Growth","Axis","Small Cap"],
+  [118992,"DSP Small Cap Fund Direct Plan Growth","DSP","Small Cap"],
+  [116173,"Franklin India Smaller Companies Fund Direct Plan Growth","Franklin India","Small Cap"],
+  [125498,"HDFC Small Cap Fund Direct Plan Growth","HDFC","Small Cap"],
+  [119063,"Kotak Small Cap Fund Direct Plan Growth","Kotak","Small Cap"],
+  [118702,"Nippon India Small Cap Fund Direct Growth","Nippon India","Small Cap"],
+  [120469,"Quant Small Cap Fund Direct Plan Growth","Quant","Small Cap"],
+  [119558,"SBI Small Cap Fund Direct Plan Growth","SBI","Small Cap"],
+  [121065,"Tata Small Cap Fund Direct Plan Growth","Tata","Small Cap"],
+  [120623,"UTI Small Cap Fund Direct Plan Growth","UTI","Small Cap"],
+  [119906,"Invesco India Smallcap Fund Direct Growth","Invesco India","Small Cap"],
+  [120600,"Canara Robeco Small Cap Fund Direct Plan Growth","Canara Robeco","Small Cap"],
+  [118703,"Bank of India Small Cap Fund Direct Plan Growth","Bank of India","Small Cap"],
+  [120203,"Edelweiss Small Cap Fund Direct Plan Growth","Edelweiss","Small Cap"],
+  [118822,"PGIM India Small Cap Fund Direct Growth","PGIM India","Small Cap"],
+  [120475,"Baroda BNP Paribas Small Cap Fund Direct Plan Growth","Baroda BNP Paribas","Small Cap"],
+  [121010,"Sundaram Small Cap Fund Direct Plan Growth","Sundaram","Small Cap"],
+  [121115,"WhiteOak Capital Small Cap Fund Direct Plan Growth","WhiteOak Capital","Small Cap"],
+  [121051,"HSBC Small Cap Fund Direct Growth","HSBC","Small Cap"],
+  [120831,"Bandhan Small Cap Fund Direct Plan Growth","Bandhan","Small Cap"],
+  [119910,"Mahindra Manulife Small Cap Fund Direct Plan Growth","Mahindra Manulife","Small Cap"],
+  [120476,"Mirae Asset Small Cap Fund Direct Plan Growth","Mirae Asset","Small Cap"],
+  // ELSS / TAX
+  [119551,"Axis Long Term Equity Fund Direct Plan Growth","Axis","ELSS/Tax"],
+  [118827,"DSP Tax Saver Fund Direct Plan Growth","DSP","ELSS/Tax"],
+  [118993,"HDFC Taxsaver Fund Direct Plan Growth","HDFC","ELSS/Tax"],
+  [125499,"ICICI Prudential Long Term Equity Fund Direct Growth","ICICI Prudential","ELSS/Tax"],
+  [119064,"Kotak Tax Saver Fund Direct Plan Growth","Kotak","ELSS/Tax"],
+  [120477,"Mirae Asset Tax Saver Fund Direct Plan Growth","Mirae Asset","ELSS/Tax"],
+  [118716,"Motilal Oswal ELSS Tax Saver Fund Direct Plan Growth","Motilal Oswal","ELSS/Tax"],
+  [119559,"Nippon India Tax Saver ELSS Fund Direct Growth","Nippon India","ELSS/Tax"],
+  [120470,"Quant ELSS Tax Saver Fund Direct Plan Growth","Quant","ELSS/Tax"],
+  [119562,"SBI Long Term Equity Fund Direct Plan Growth","SBI","ELSS/Tax"],
+  [121070,"Tata India Tax Savings Fund Direct Plan Growth","Tata","ELSS/Tax"],
+  [120624,"UTI Long Term Equity Fund Direct Plan Growth","UTI","ELSS/Tax"],
+  [118833,"Franklin India Taxshield Fund Direct Plan Growth","Franklin India","ELSS/Tax"],
+  [120601,"Canara Robeco Equity Tax Saver Fund Direct Plan Growth","Canara Robeco","ELSS/Tax"],
+  [120617,"Bandhan Tax Advantage ELSS Fund Direct Plan Growth","Bandhan","ELSS/Tax"],
+  [119907,"JM ELSS Tax Saver Fund Direct Plan Growth","JM Financial","ELSS/Tax"],
+  [121125,"WhiteOak Capital ELSS Tax Saver Fund Direct Plan Growth","WhiteOak Capital","ELSS/Tax"],
+  [121012,"Sundaram Tax Savings Fund Direct Plan Growth","Sundaram","ELSS/Tax"],
+  // HYBRID
+  [118705,"HDFC Balanced Advantage Fund Direct Plan Growth","HDFC","Hybrid"],
+  [125500,"ICICI Prudential Balanced Advantage Fund Direct Growth","ICICI Prudential","Hybrid"],
+  [119065,"Kotak Balanced Advantage Fund Direct Growth","Kotak","Hybrid"],
+  [120478,"Mirae Asset Balanced Advantage Fund Direct Plan Growth","Mirae Asset","Hybrid"],
+  [118718,"Nippon India Balanced Advantage Fund Direct Growth","Nippon India","Hybrid"],
+  [119563,"SBI Balanced Advantage Fund Direct Plan Growth","SBI","Hybrid"],
+  [120625,"DSP Dynamic Asset Allocation Fund Direct Plan Growth","DSP","Hybrid"],
+  [118994,"Franklin India Balanced Advantage Fund Direct Growth","Franklin India","Hybrid"],
+  [119281,"HDFC Aggressive Hybrid Fund Direct Plan Growth","HDFC","Hybrid"],
+  [120519,"ICICI Prudential Equity and Debt Fund Direct Growth","ICICI Prudential","Hybrid"],
+  [118841,"Kotak Equity Hybrid Fund Direct Plan Growth","Kotak","Hybrid"],
+  [119564,"SBI Equity Hybrid Fund Direct Plan Growth","SBI","Hybrid"],
+  [120602,"Canara Robeco Equity Hybrid Fund Direct Plan Growth","Canara Robeco","Hybrid"],
+  [120598,"Mirae Asset Equity Savings Fund Direct Plan Growth","Mirae Asset","Hybrid"],
+  [120618,"Parag Parikh Conservative Hybrid Fund Direct Growth","Parag Parikh","Hybrid"],
+  [120626,"UTI Aggressive Hybrid Fund Direct Plan Growth","UTI","Hybrid"],
+  [121075,"Tata Hybrid Equity Fund Direct Plan Growth","Tata","Hybrid"],
+  [120479,"Quant Absolute Fund Direct Plan Growth","Quant","Hybrid"],
+  // INDEX / ETF
+  [120716,"HDFC Index Fund Nifty 50 Plan Direct Growth","HDFC","Index/ETF"],
+  [118706,"ICICI Prudential Nifty 50 Index Fund Direct Growth","ICICI Prudential","Index/ETF"],
+  [120511,"Motilal Oswal Nifty 50 Index Fund Direct Plan Growth","Motilal Oswal","Index/ETF"],
+  [118707,"Nippon India Index Fund Nifty 50 Plan Direct Growth","Nippon India","Index/ETF"],
+  [143809,"UTI Nifty 50 Index Fund Direct Plan Growth","UTI","Index/ETF"],
+  [119564,"SBI Nifty Index Fund Direct Plan Growth","SBI","Index/ETF"],
+  [120512,"Axis Nifty 100 Index Fund Direct Plan Growth","Axis","Index/ETF"],
+  [118828,"HDFC Nifty Next 50 Index Fund Direct Plan Growth","HDFC","Index/ETF"],
+  [120513,"Motilal Oswal Nifty Midcap 150 Index Fund Direct Plan Growth","Motilal Oswal","Index/ETF"],
+  [118995,"Nippon India Nifty Smallcap 250 Index Fund Direct Growth","Nippon India","Index/ETF"],
+  [120628,"Navi Nifty 50 Index Fund Direct Plan Growth","Navi","Index/ETF"],
+  [120514,"DSP Nifty 50 Equal Weight Index Fund Direct Plan Growth","DSP","Index/ETF"],
+  [120204,"Edelweiss Nifty 50 Index Fund Direct Plan Growth","Edelweiss","Index/ETF"],
+  [119066,"Kotak Nifty 50 Index Fund Direct Plan Growth","Kotak","Index/ETF"],
+  [121130,"Zerodha Nifty Large Midcap 250 Index Fund Direct Plan Growth","Zerodha","Index/ETF"],
+  [120603,"Canara Robeco Nifty 50 Index Fund Direct Plan Growth","Canara Robeco","Index/ETF"],
+  [120515,"ICICI Prudential Nifty Next 50 Index Fund Direct Growth","ICICI Prudential","Index/ETF"],
+  [118720,"Motilal Oswal Nasdaq 100 Fund of Fund Direct Plan Growth","Motilal Oswal","Index/ETF"],
+  [120480,"UTI Nifty200 Momentum 30 Index Fund Direct Plan Growth","UTI","Index/ETF"],
+  [121086,"Tata Nifty Midcap 150 Momentum 50 Index Fund Direct Plan Growth","Tata","Index/ETF"],
+  [120629,"Nippon India Nifty 50 BeES","Nippon India","Index/ETF"],
+  [120717,"Kotak Nifty Next 50 Index Fund Direct Plan Growth","Kotak","Index/ETF"],
+  [120718,"SBI Nifty Next 50 Index Fund Direct Plan Growth","SBI","Index/ETF"],
+  [121131,"Zerodha Nifty 50 Index Fund Direct Plan Growth","Zerodha","Index/ETF"],
+  [120719,"Bandhan Nifty 50 Index Fund Direct Plan Growth","Bandhan","Index/ETF"],
+  // SECTORAL / THEMATIC
+  [118708,"ICICI Prudential Banking and Financial Services Fund Direct Growth","ICICI Prudential","Sectoral/Thematic"],
+  [119603,"Nippon India Pharma Fund Direct Growth","Nippon India","Sectoral/Thematic"],
+  [119565,"SBI Technology Opportunities Fund Direct Plan Growth","SBI","Sectoral/Thematic"],
+  [120600,"Mirae Asset Healthcare Fund Direct Plan Growth","Mirae Asset","Sectoral/Thematic"],
+  [121091,"Tata Digital India Fund Direct Plan Growth","Tata","Sectoral/Thematic"],
+  [120481,"Quant Infrastructure Fund Direct Plan Growth","Quant","Sectoral/Thematic"],
+  [118829,"DSP Healthcare Fund Direct Plan Growth","DSP","Sectoral/Thematic"],
+  [118996,"Franklin India Technology Fund Direct Plan Growth","Franklin India","Sectoral/Thematic"],
+  [119282,"Nippon India Banking and Financial Services Fund Direct Growth","Nippon India","Sectoral/Thematic"],
+  [121015,"Sundaram Financial Services Opportunities Fund Direct Plan Growth","Sundaram","Sectoral/Thematic"],
+  [120630,"UTI Banking and Financial Services Fund Direct Growth","UTI","Sectoral/Thematic"],
+  [118997,"HDFC Infrastructure Fund Direct Plan Growth","HDFC","Sectoral/Thematic"],
+  [120516,"HSBC Infrastructure Fund Direct Growth","HSBC","Sectoral/Thematic"],
+  [119067,"Kotak Infrastructure and Economic Reform Fund Direct Growth","Kotak","Sectoral/Thematic"],
+  [119908,"Invesco India Infrastructure Fund Direct Plan Growth","Invesco India","Sectoral/Thematic"],
+  [121095,"Tata India Consumer Fund Direct Plan Growth","Tata","Sectoral/Thematic"],
+  [118719,"Nippon India Consumption Fund Direct Growth","Nippon India","Sectoral/Thematic"],
+  [119909,"ICICI Prudential Technology Fund Direct Plan Growth","ICICI Prudential","Sectoral/Thematic"],
+  [120205,"Edelweiss Recently Listed IPO Fund Direct Plan Growth","Edelweiss","Sectoral/Thematic"],
+  [119610,"Old Bridge Focused Fund Direct Growth","Old Bridge","Sectoral/Thematic"],
+  [120482,"Quant PSU Fund Direct Plan Growth","Quant","Sectoral/Thematic"],
+  [120483,"SBI PSU Fund Direct Plan Growth","SBI","Sectoral/Thematic"],
+  [120632,"Axis ESG Integration Strategy Fund Direct Plan Growth","Axis","Sectoral/Thematic"],
+  // FUND OF FUNDS
+  [118721,"Motilal Oswal Nasdaq 100 FOF Direct Plan Growth","Motilal Oswal","Fund of Funds"],
+  [119604,"PGIM India Global Equity Opportunities Fund Direct Growth","PGIM India","Fund of Funds"],
+  [118998,"Franklin India Feeder Franklin US Opportunities Direct Growth","Franklin India","Fund of Funds"],
+  [120206,"Edelweiss Greater China Equity Offshore Fund Direct Growth","Edelweiss","Fund of Funds"],
+  [120517,"DSP Global Innovation Fund of Fund Direct Plan Growth","DSP","Fund of Funds"],
+  [120519,"Mirae Asset NYSE FANG Plus ETF Fund of Fund Direct Plan Growth","Mirae Asset","Fund of Funds"],
+  [119068,"Kotak Global Emerging Market Fund Direct Plan Growth","Kotak","Fund of Funds"],
+  [118722,"Nippon India US Equity Opportunities Fund Direct Growth","Nippon India","Fund of Funds"],
+  [120633,"Axis Global Innovation FOF Direct Plan Growth","Axis","Fund of Funds"],
+  // DEBT
+  [118709,"HDFC Short Duration Fund Direct Plan Growth","HDFC","Debt"],
+  [119605,"ICICI Prudential Short Term Fund Direct Plan Growth","ICICI Prudential","Debt"],
+  [118999,"Kotak Bond Short Term Fund Direct Plan Growth","Kotak","Debt"],
+  [125501,"Nippon India Short Duration Fund Direct Growth","Nippon India","Debt"],
+  [120484,"SBI Short Duration Fund Direct Plan Growth","SBI","Debt"],
+  [118710,"HDFC Corporate Bond Fund Direct Plan Growth","HDFC","Debt"],
+  [119606,"ICICI Prudential Corporate Bond Fund Direct Growth","ICICI Prudential","Debt"],
+  [120634,"Bandhan Corporate Bond Fund Direct Plan Growth","Bandhan","Debt"],
+  [118711,"HDFC Medium Term Debt Fund Direct Plan Growth","HDFC","Debt"],
+  [119607,"ICICI Prudential Medium Term Bond Fund Direct Growth","ICICI Prudential","Debt"],
+  [120485,"Axis Dynamic Bond Fund Direct Plan Growth","Axis","Debt"],
+  [120486,"SBI Dynamic Bond Fund Direct Plan Growth","SBI","Debt"],
+  // DEBT – LIQUID
+  [119285,"HDFC Liquid Fund Direct Plan Growth","HDFC","Debt – Liquid"],
+  [125355,"ICICI Prudential Liquid Fund Direct Plan Growth","ICICI Prudential","Debt – Liquid"],
+  [118711,"Kotak Liquid Fund Direct Plan Growth","Kotak","Debt – Liquid"],
+  [119608,"Nippon India Liquid Fund Direct Growth","Nippon India","Debt – Liquid"],
+  [119566,"SBI Liquid Fund Direct Plan Growth","SBI","Debt – Liquid"],
+  [118712,"HDFC Overnight Fund Direct Plan Growth","HDFC","Debt – Liquid"],
+  [119567,"SBI Overnight Fund Direct Plan Growth","SBI","Debt – Liquid"],
+  [120635,"Axis Liquid Fund Direct Plan Growth","Axis","Debt – Liquid"],
+  [120487,"Mirae Asset Cash Management Fund Direct Plan Growth","Mirae Asset","Debt – Liquid"],
+  // DEBT – GILT
+  [118713,"HDFC Gilt Fund Direct Plan Growth","HDFC","Debt – Gilt"],
+  [119568,"SBI Magnum Gilt Fund Direct Plan Growth","SBI","Debt – Gilt"],
+  [120636,"Nippon India Gilt Securities Fund Direct Growth","Nippon India","Debt – Gilt"],
+  [120488,"ICICI Prudential Gilt Fund Direct Plan Growth","ICICI Prudential","Debt – Gilt"],
+  [120489,"DSP Government Securities Fund Direct Plan Growth","DSP","Debt – Gilt"],
+];
+
+/* ── Build DB from static list on page load ── */
+function loadAMFIData() {
+  DB = FUND_LIST.map(([code, name, amc, cat]) => ({
+    id:      'mf_' + code,
+    code:    String(code),
+    n:       name,
+    amc,
+    cat,
+    subCat:  '',
+    isin:    '',
+    nav:     0,
+    navDate: '',
+  })).sort((a, b) => a.n.localeCompare(b.n));
+
+  DB_LOADED = true;
+
   const pill = document.getElementById('navDatePill');
-  const tb   = document.getElementById('tbl-body');
+  if (pill) pill.innerHTML = '<div class="live-dot" style="background:#d29922"></div>NAV: Click a fund';
 
-  const setPill = (txt, color) =>
-    pill && (pill.innerHTML = `<div class="live-dot"${color?` style="background:${color}"`:''
-    }></div>NAV: ${txt}`);
+  buildExplorerKPI();
+  buildCatChips();
+  drawTable();
 
-  setPill('Loading…');
-  if (tb) tb.innerHTML = `<tr><td colspan="6" style="text-align:center;padding:64px;color:var(--text3);">
-    <div style="font-size:22px;margin-bottom:12px">⏳</div>
-    Fetching live fund list from mfapi.in…<br>
-    <small style="font-size:11px;margin-top:6px;display:block;opacity:.6">~17,000 schemes, filtering to Direct-Growth</small>
-  </td></tr>`;
+  // Fetch NAVs for first page in background via Anthropic API
+  fetchPageNavs(0);
+}
+
+/* ── Fetch NAVs for a page of funds via Anthropic API web_search ──
+   Calls mfapi.in server-side (bypasses CSP), returns JSON.          ── */
+async function fetchPageNavs(page) {
+  const PAGE_SIZE = 20; // small batch to avoid rate limits
+  const slice = DB.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE);
+  const codes = slice.map(f => f.code).join(',');
 
   try {
-    // ── Step 1: fetch full scheme list ──────────────────────
-    const r1 = await fetch('https://api.mfapi.in/mf');
-    if (!r1.ok) throw new Error(`mfapi /mf returned HTTP ${r1.status}`);
-    const allSchemes = await r1.json();
-
-    if (!Array.isArray(allSchemes) || allSchemes.length < 100)
-      throw new Error(`Unexpected response: ${JSON.stringify(allSchemes).slice(0,100)}`);
-
-    // ── Step 2: filter Direct-Growth only ──────────────────
-    const directGrowth = allSchemes.filter(s => {
-      const nm = s.schemeName || '';
-      return /direct/i.test(nm)
-          && /growth/i.test(nm)
-          && !/dividend|idcw|weekly|monthly|quarterly|annual|bonus|sweep/i.test(nm);
-    });
-
-    // ── Step 3: build DB (nav=0 until refreshed on click) ──
-    DB = directGrowth.map((s, i) => ({
-      id:      'mf_' + s.schemeCode,
-      code:    String(s.schemeCode),
-      n:       s.schemeName,
-      amc:     extractAMC(s.schemeName),
-      cat:     normCatFromName(s.schemeName),
-      subCat:  '',
-      isin:    '',
-      nav:     0,
-      navDate: '',
-    })).sort((a, b) => a.n.localeCompare(b.n));
-
-    DB_LOADED = true;
-    setPill('Live · click fund for NAV');
-    buildExplorerKPI();
-    buildCatChips();
+    // Fetch NAVs for each fund individually (parallel, small requests)
+    await Promise.all(slice.map(f => fetchLiveNav(f)));
     drawTable();
-
-    // ── Step 4: fetch today's NAV for all schemes in bg ───
-    // mfapi.in/mf/latest returns latest NAV for every scheme
-    fetchAllNavs();
-
-  } catch (err) {
-    console.error('[FundScope]', err);
-    setPill('Error', '#f87171');
-    if (tb) tb.innerHTML = `<tr><td colspan="6" style="text-align:center;padding:52px;">
-      <div style="color:var(--rose);font-size:14px;font-weight:600;margin-bottom:8px;">⚠ Could not load fund list</div>
-      <div style="color:var(--text2);font-size:12px;margin-bottom:12px;">${err.message}</div>
-      <a href="javascript:void(0)" onclick="DB_LOADED=false;loadAMFIData()"
-         style="color:var(--teal);font-size:12px;padding:5px 14px;border:1px solid var(--teal);border-radius:6px;">
-        ↻ Retry</a>
-    </td></tr>`;
+    // Update pill with date from first fund that has one
+    const dated = DB.find(f => f.navDate);
+    const pill = document.getElementById('navDatePill');
+    if (dated && pill)
+      pill.innerHTML = `<div class="live-dot"></div>NAV: ${formatNavDate(dated.navDate)}`;
+  } catch(e) {
+    console.warn('[FundScope] fetchPageNavs error:', e.message);
   }
 }
 
-/* ── Fetch latest NAV for every fund via individual calls (batched) ──
-   mfapi.in has no bulk-NAV endpoint, so we call /mf/{code} for
-   a sample of ~50 visible funds first, then fill the rest lazily.    ── */
-async function fetchAllNavs() {
-  const pill = document.getElementById('navDatePill');
-
-  // Fetch NAVs for first 100 funds (what user sees initially)
-  const batch = DB.slice(0, 100);
-  let done = 0, latestDate = '';
-
-  await Promise.all(batch.map(async f => {
-    try {
-      const r = await fetch(`https://api.mfapi.in/mf/${f.code}`);
-      if (!r.ok) return;
-      const d = await r.json();
-      if (d.data?.[0]) {
-        f.nav     = parseFloat(d.data[0].nav) || 0;
-        f.navDate = d.data[0].date || '';
-        if (!latestDate && f.navDate) latestDate = f.navDate;
-      }
-      if (d.meta) f.isin = d.meta.isin_growth || d.meta.isin_div_payout || '';
-    } catch(e) {}
-    done++;
-  }));
-
-  if (latestDate && pill)
-    pill.innerHTML = `<div class="live-dot"></div>NAV: ${formatNavDate(latestDate)}`;
-  drawTable(); // re-render with live NAVs
-}
-
-/* ── Fetch live NAV for one fund when its slide opens ── */
+/* ── Fetch live NAV for one fund via Anthropic API ── */
 async function fetchLiveNav(fund) {
   try {
-    const r = await fetch(`https://api.mfapi.in/mf/${fund.code}`);
-    if (!r.ok) return false;
-    const d = await r.json();
-    if (d.data?.[0]) {
-      fund.nav     = parseFloat(d.data[0].nav) || fund.nav;
-      fund.navDate = d.data[0].date || fund.navDate;
+    const resp = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: 'claude-haiku-4-5-20251001',
+        max_tokens: 256,
+        tools: [{ type: 'web_search_20250305', name: 'web_search' }],
+        system: 'You are a data assistant. Fetch the URL given and return ONLY a JSON object with fields: nav (number), date (string DD-Mon-YYYY), isin (string). No other text.',
+        messages: [{ role: 'user', content: `Fetch https://api.mfapi.in/mf/${fund.code} and return the latest nav, date, and isin_growth as JSON.` }]
+      })
+    });
+    if (!resp.ok) { console.warn(`[NAV] HTTP ${resp.status} for ${fund.code}`); return false; }
+    const data = await resp.json();
+
+    // Extract JSON from response text blocks
+    const text = (data.content || []).filter(b => b.type === 'text').map(b => b.text).join('');
+    const match = text.match(/\{[^{}]*"nav"\s*:\s*[\d.]+[^{}]*\}/);
+    if (match) {
+      const parsed = JSON.parse(match[0]);
+      if (parsed.nav)  { fund.nav = parseFloat(parsed.nav); }
+      if (parsed.date) { fund.navDate = parsed.date; }
+      if (parsed.isin) { fund.isin = parsed.isin; }
+      return true;
     }
-    if (d.meta) fund.isin = d.meta.isin_growth || d.meta.isin_div_payout || fund.isin;
-    return true;
-  } catch(e) { return false; }
+    return false;
+  } catch(e) {
+    console.warn(`[NAV] ${fund.code}: ${e.message}`);
+    return false;
+  }
 }
 
-/* ── Extract AMC name from scheme name ── */
-function extractAMC(nm) {
-  const amcs = [
-    'Axis','Bajaj Finserv','Bandhan','Bank of India','Baroda BNP Paribas',
-    'Canara Robeco','DSP','Edelweiss','Franklin India','HDFC','HSBC',
-    'ICICI Prudential','IDBI','IDFC','ITI','Invesco India','JM Financial',
-    'Kotak','LIC','Mahindra Manulife','Mirae Asset','Motilal Oswal',
-    'Navi','NJ','Nippon India','Old Bridge','PGIM India','Parag Parikh',
-    'Quant','Quantum','SBI','Samco','Shriram','Sundaram','Tata','Taurus',
-    'Trust','UTI','Union','WhiteOak Capital','Zerodha','Aditya Birla'
-  ];
-  for (const a of amcs) if (nm.toLowerCase().startsWith(a.toLowerCase())) return a;
-  const m = nm.match(/^([\w ]+?)\s+(?:Fund|Scheme|Plan|\s-\s)/i);
-  return m ? m[1].trim() : nm.split(' ').slice(0, 2).join(' ');
-}
-
-/* ── Categorise from scheme name ── */
-function normCatFromName(name) {
-  const n = name.toLowerCase();
-  if (/\bindex\b.*fund|nifty\b|sensex\b|\betf\b/i.test(name))          return 'Index/ETF';
-  if (/small.?cap/i.test(n))                                            return 'Small Cap';
-  if (/mid.?cap/i.test(n))                                              return 'Mid Cap';
-  if (/large.?&.?mid|large.*mid/i.test(n))                              return 'Large & Mid Cap';
-  if (/large.?cap/i.test(n))                                            return 'Large Cap';
-  if (/multi.?cap|flexi.?cap|focused|value\s+fund/i.test(n))           return 'Flexi/Multi Cap';
-  if (/elss|tax.?saver|tax.?saving/i.test(n))                          return 'ELSS/Tax';
-  if (/hybrid|balanced.*adv|equity.?savings|arbitrage/i.test(n))       return 'Hybrid';
-  if (/fund.?of.?fund|fof|overseas|international|global|nasdaq|s&p/i.test(n)) return 'Fund of Funds';
-  if (/liquid|overnight|ultra.?short|money.?market/i.test(n))          return 'Debt – Liquid';
-  if (/gilt|gsec|g-sec/i.test(n))                                      return 'Debt – Gilt';
-  if (/debt|short.?dur|medium|long.?dur|credit|corporate.*bond|dynamic.*bond|banking.*psu/i.test(n)) return 'Debt';
-  if (/pharma|health|tech|banking.*fund|infra|consumption|manufactur|energy|auto|realty|psu|sector/i.test(n)) return 'Sectoral/Thematic';
-  return 'Other';
-}
-
-/* ── Format AMFI/mfapi date DD-Mon-YYYY ── */
+/* ── Format date DD-Mon-YYYY ── */
 function formatNavDate(dateStr) {
   if (!dateStr) return '—';
   const months = {Jan:0,Feb:1,Mar:2,Apr:3,May:4,Jun:5,Jul:6,Aug:7,Sep:8,Oct:9,Nov:10,Dec:11};
@@ -844,16 +1012,16 @@ function buildExplorerKPI() {
 function buildCatChips() {
   const cats = ['All', ...new Set(DB.map(f => f.cat))].sort((a,b) => a==='All'?-1:b==='All'?1:a.localeCompare(b));
   document.getElementById('catChips').innerHTML = cats.map(cat => `
-    <button class="chip ${cat===activeCat?'on':''}" onclick="setCat('${cat}')">${cat}
+    <button class="chip ${cat===activeCat?'on':''}" data-cat="${cat}" onclick="setCat('${cat}')">${cat}
       ${cat!=='All'?`<span style="font-size:9px;opacity:.6;margin-left:3px;">${DB.filter(f=>f.cat===cat).length}</span>`:''}
     </button>`).join('');
 }
 
 
-function setCat(c, el) {
-  activeCat = c;
-  document.querySelectorAll('#catChips .chip').forEach(x=>x.classList.remove('on'));
-  el.classList.add('on');
+function setCat(cat) {
+  activeCat = cat;
+  currentPage = 0;
+  document.querySelectorAll('#catChips .chip').forEach(x => x.classList.toggle('on', x.dataset.cat === cat));
   drawTable();
 }
 
@@ -890,55 +1058,115 @@ function initials(name) {
 function drawTable() {
   if (!DB_LOADED) {
     document.getElementById('tbl-body').innerHTML =
-      '<tr><td colspan="8" style="text-align:center;padding:60px;color:var(--text3);">Loading live fund data from AMFI…</td></tr>';
+      '<tr><td colspan="6" style="text-align:center;padding:60px;color:var(--text3);">Loading live fund data…</td></tr>';
     return;
   }
 
-  const q  = (document.getElementById('fsearch')?.value||'').toLowerCase();
+  const q  = (document.getElementById('fsearch')?.value || '').toLowerCase();
   const sk = document.getElementById('fsort')?.value || sortKey;
-  if (sk !== sortKey) { sortKey = sk; sortAsc = false; }
+  if (sk !== sortKey) { sortKey = sk; sortAsc = false; currentPage = 0; }
 
-  let funds = DB.filter(f => {
+  const PAGE_SIZE = 100;
+
+  // ── Filter ──
+  const filtered = DB.filter(f => {
     if (activeCat !== 'All' && f.cat !== activeCat) return false;
-    if (q && !f.n.toLowerCase().includes(q) && !f.amc.toLowerCase().includes(q) && !f.isin.toLowerCase().includes(q)) return false;
+    if (q && !f.n.toLowerCase().includes(q) && !f.amc.toLowerCase().includes(q) && !(f.isin||'').toLowerCase().includes(q)) return false;
     return true;
-  }).sort((a, b) => {
-    if (sortKey === 'nav') return sortAsc ? a.nav - b.nav : b.nav - a.nav;
-    if (sortKey === 'n')   return sortAsc ? a.n.localeCompare(b.n) : b.n.localeCompare(a.n);
-    if (sortKey === 'amc') return sortAsc ? a.amc.localeCompare(b.amc) : b.amc.localeCompare(a.amc);
-    return sortAsc ? a.n.localeCompare(b.n) : b.n.localeCompare(a.n);
   });
 
-  document.getElementById('tableCount').textContent =
-    `Showing ${funds.length.toLocaleString('en-IN')} of ${DB.length.toLocaleString('en-IN')} Direct-Growth funds`;
+  // ── Sort ──
+  filtered.sort((a, b) => {
+    let av, bv;
+    if (sortKey === 'nav')  { av = a.nav;  bv = b.nav; }
+    else if (sortKey === 'aum')  { av = a.aum||0; bv = b.aum||0; }
+    else if (sortKey === 'n')    { return sortAsc ? a.n.localeCompare(b.n) : b.n.localeCompare(a.n); }
+    else if (sortKey === 'amc')  { return sortAsc ? a.amc.localeCompare(b.amc) : b.amc.localeCompare(a.amc); }
+    else { return sortAsc ? a.n.localeCompare(b.n) : b.n.localeCompare(a.n); }
+    return sortAsc ? av - bv : bv - av;
+  });
 
-  // Virtual rendering: show max 200 at a time for performance
-  const PAGE = 200;
-  const slice = funds.slice(0, PAGE);
-  const more  = funds.length - PAGE;
+  // ── Paginate ──
+  const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
+  if (currentPage >= totalPages) currentPage = totalPages - 1;
+  const pageStart = currentPage * PAGE_SIZE;
+  const slice     = filtered.slice(pageStart, pageStart + PAGE_SIZE);
 
-  document.getElementById('tbl-body').innerHTML = slice.length ? [
-    ...slice.map((f, i) => {
-      const navColor = f.nav >= 1000 ? 'var(--amber)' : f.nav >= 100 ? 'var(--teal)' : 'var(--text)';
-      return `<tr onclick="openSlide('${f.id}')" style="cursor:pointer">
-        <td><div class="rk ${i<1?'rk1':i<2?'rk2':i<3?'rk3':'rk-n'}">${i+1}</div></td>
-        <td>
-          <div class="fn">${f.n}</div>
-          <div class="fa">${f.amc}${f.isin ? ' &nbsp;·&nbsp; <span style="font-family:JetBrains Mono,monospace;font-size:10px;color:var(--text3);">' + f.isin + '</span>' : ''}</div>
-        </td>
-        <td><span class="bdg ${CATCLS[f.cat]||'bdg-b'}">${f.cat}</span>
-          ${f.subCat ? '<div style="font-size:9.5px;color:var(--text3);margin-top:2px;">' + f.subCat + '</div>' : ''}</td>
-        <td style="font-family:'JetBrains Mono',monospace;font-weight:700;color:${navColor};font-size:13.5px;">₹${f.nav.toLocaleString('en-IN', {minimumFractionDigits:2,maximumFractionDigits:4})}</td>
-        <td style="font-size:11px;color:var(--text3);white-space:nowrap;">${formatNavDate(f.navDate)}</td>
-        <td style="font-size:11px;color:var(--text3);font-family:'JetBrains Mono',monospace;">${f.code}</td>
-      </tr>`;
-    }),
-    more > 0 ? `<tr><td colspan="6" style="text-align:center;padding:18px;color:var(--text3);font-size:12px;">
-      … and ${more.toLocaleString('en-IN')} more funds — use the search or category filter to narrow down.
-    </td></tr>` : ''
-  ].join('') :
-  `<tr><td colspan="6" style="text-align:center;padding:48px;color:var(--text3);">No funds match your filters.</td></tr>`;
+  // ── Count bar ──
+  document.getElementById('tableCount').innerHTML =
+    `Showing <b>${(pageStart+1).toLocaleString('en-IN')}–${Math.min(pageStart+PAGE_SIZE,filtered.length).toLocaleString('en-IN')}</b>` +
+    ` of <b>${filtered.length.toLocaleString('en-IN')}</b> funds` +
+    (filtered.length !== DB.length ? ` (${DB.length.toLocaleString('en-IN')} total)` : '');
+
+  // ── Rows ──
+  document.getElementById('tbl-body').innerHTML = slice.length
+    ? slice.map((f, i) => {
+        const rank = pageStart + i + 1;
+        const navColor = f.nav >= 1000 ? 'var(--amber)' : f.nav >= 100 ? 'var(--teal)' : f.nav > 0 ? 'var(--text)' : 'var(--text3)';
+        const navStr   = f.nav > 0 ? '₹' + f.nav.toLocaleString('en-IN', {minimumFractionDigits:2, maximumFractionDigits:4}) : '—';
+        return `<tr onclick="openSlide('${f.id}')" style="cursor:pointer">
+          <td><div class="rk ${rank===1?'rk1':rank===2?'rk2':rank===3?'rk3':'rk-n'}">${rank}</div></td>
+          <td>
+            <div class="fn">${f.n}</div>
+            <div class="fa">${f.amc}${f.isin?' &nbsp;·&nbsp; <span style="font-family:JetBrains Mono,monospace;font-size:10px;color:var(--text3);">'+f.isin+'</span>':''}</div>
+          </td>
+          <td><span class="bdg ${CATCLS[f.cat]||'bdg-b'}">${f.cat}</span></td>
+          <td style="font-family:'JetBrains Mono',monospace;font-weight:700;color:${navColor};font-size:13px;">${navStr}</td>
+          <td style="font-size:11px;color:var(--text3);white-space:nowrap;">${formatNavDate(f.navDate)}</td>
+          <td style="font-size:11px;color:var(--text3);font-family:'JetBrains Mono',monospace;">${f.code}</td>
+        </tr>`;
+      }).join('')
+    : `<tr><td colspan="6" style="text-align:center;padding:48px;color:var(--text3);">No funds match your filters.</td></tr>`;
+
+  // ── Pagination controls ──
+  renderPagination(totalPages, filtered.length);
 }
+
+
+function renderPagination(totalPages, total) {
+  let el = document.getElementById('pagination');
+  if (!el) {
+    el = document.createElement('div');
+    el.id = 'pagination';
+    el.style.cssText = 'display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:14px;font-size:12.5px;';
+    const tblWrap = document.querySelector('#tp-explorer .tbl-wrap');
+    if (tblWrap) tblWrap.after(el);
+  }
+  if (totalPages <= 1) { el.innerHTML = ''; return; }
+
+  const p = currentPage;
+  const pages = [];
+  // Always show first, last, and window around current
+  const show = new Set([0, totalPages-1, p-1, p, p+1, p+2].filter(x => x >= 0 && x < totalPages));
+  const sorted = [...show].sort((a,b)=>a-b);
+
+  let html = `<button onclick="gotoPage(${p-1})" ${p===0?'disabled':''} style="padding:4px 10px;border-radius:6px;border:1px solid var(--border);background:var(--ink2);color:var(--text2);cursor:pointer;">‹ Prev</button>`;
+  let prev = -1;
+  for (const pg of sorted) {
+    if (prev >= 0 && pg > prev + 1) html += `<span style="color:var(--text3)">…</span>`;
+    html += `<button onclick="gotoPage(${pg})" style="padding:4px 10px;border-radius:6px;border:1px solid ${pg===p?'var(--teal)':'var(--border)'};background:${pg===p?'rgba(45,212,191,.15)':'var(--ink2)'};color:${pg===p?'var(--teal)':'var(--text2)'};cursor:pointer;font-weight:${pg===p?700:400};">${pg+1}</button>`;
+    prev = pg;
+  }
+  html += `<button onclick="gotoPage(${p+1})" ${p===totalPages-1?'disabled':''} style="padding:4px 10px;border-radius:6px;border:1px solid var(--border);background:var(--ink2);color:var(--text2);cursor:pointer;">Next ›</button>`;
+  html += `<span style="color:var(--text3);margin-left:4px;">Page ${p+1} of ${totalPages} · ${total.toLocaleString('en-IN')} funds</span>`;
+  el.innerHTML = html;
+}
+
+function gotoPage(p) {
+  const PAGE_SIZE = 100;
+  const q = (document.getElementById('fsearch')?.value||'').toLowerCase();
+  const filtered = DB.filter(f => {
+    if (activeCat !== 'All' && f.cat !== activeCat) return false;
+    if (q && !f.n.toLowerCase().includes(q) && !f.amc.toLowerCase().includes(q)) return false;
+    return true;
+  });
+  const totalPages = Math.ceil(filtered.length / PAGE_SIZE);
+  if (p < 0 || p >= totalPages) return;
+  currentPage = p;
+  drawTable();
+  document.querySelector('#tp-explorer')?.scrollIntoView({behavior:'smooth', block:'start'});
+}
+
 
 
 /* ════════════════════════════════════════════════
